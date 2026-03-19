@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../services/database.js';
+import { getOne, getAll, runQuery, saveDatabase } from '../services/database.js';
 import { AuthRequest } from '../middleware/auth.js';
 
 export const createLoad = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -15,20 +15,22 @@ export const createLoad = async (req: AuthRequest, res: Response): Promise<void>
     
     const loadId = uuidv4();
     
-    db.prepare(`
+    runQuery(`
       INSERT INTO loads (id, shipper_id, pickup_address, pickup_lat, pickup_lng, delivery_address, delivery_lat, delivery_lng, cargo_type, cargo_weight, cargo_dimensions, truck_type, special_requirements, pickup_date, delivery_date, price, status, current_status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'pending')
-    `).run(loadId, req.user?.userId, pickupAddress, pickupLat, pickupLng, deliveryAddress, deliveryLat, deliveryLng, cargoType, cargoWeight, cargoDimensions, truckType, specialRequirements, pickupDate, deliveryDate, price);
+    `, [loadId, req.user?.userId, pickupAddress, pickupLat, pickupLng, deliveryAddress, deliveryLat, deliveryLng, cargoType, cargoWeight, cargoDimensions, truckType, specialRequirements, pickupDate, deliveryDate, price]);
     
     // Notify drivers about new load
-    const drivers = db.prepare("SELECT id FROM users WHERE role = 'driver' AND document_status = 'verified'").all() as any[];
-    const insertNotification = db.prepare('INSERT INTO notifications (id, user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?, ?)');
+    const drivers = getAll("SELECT id FROM users WHERE role = 'driver' AND document_status = 'verified'");
     
-    drivers.forEach(driver => {
-      insertNotification.run(uuidv4(), driver.id, 'New Load Available', `New ${cargoType} load from ${pickupAddress.split(',')[0]} to ${deliveryAddress.split(',')[0]}`, 'new_load', loadId);
+    drivers.forEach((driver: any) => {
+      runQuery('INSERT INTO notifications (id, user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?, ?)',
+        [uuidv4(), driver.id, 'New Load Available', `New ${cargoType} load from ${pickupAddress.split(',')[0]} to ${deliveryAddress.split(',')[0]}`, 'new_load', loadId]);
     });
     
-    const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(loadId) as any;
+    saveDatabase();
+    
+    const load = getOne('SELECT * FROM loads WHERE id = ?', [loadId]);
     
     res.status(201).json({ success: true, data: formatLoad(load) });
   } catch (error) {
@@ -39,7 +41,7 @@ export const createLoad = async (req: AuthRequest, res: Response): Promise<void>
 
 export const getLoads = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { status, role } = req.query;
+    const { status } = req.query;
     let loads: any[];
     
     if (req.user?.role === 'shipper') {
@@ -52,7 +54,7 @@ export const getLoads = async (req: AuthRequest, res: Response): Promise<void> =
       }
       
       query += ' ORDER BY l.created_at DESC';
-      loads = db.prepare(query).all(...params);
+      loads = getAll(query, params);
     } else if (req.user?.role === 'driver') {
       let query = 'SELECT l.*, u.name as shipper_name, u.phone as shipper_phone FROM loads l LEFT JOIN users u ON l.shipper_id = u.id WHERE 1=1';
       const params: any[] = [];
@@ -71,9 +73,9 @@ export const getLoads = async (req: AuthRequest, res: Response): Promise<void> =
       }
       
       query += ' ORDER BY l.created_at DESC';
-      loads = db.prepare(query).all(...params);
+      loads = getAll(query, params);
     } else {
-      loads = db.prepare('SELECT * FROM loads ORDER BY created_at DESC').all();
+      loads = getAll('SELECT * FROM loads ORDER BY created_at DESC');
     }
     
     res.json({ success: true, data: loads.map(formatLoad) });
@@ -87,14 +89,14 @@ export const getLoad = async (req: AuthRequest, res: Response): Promise<void> =>
   try {
     const { id } = req.params;
     
-    const load = db.prepare(`
+    const load = getOne(`
       SELECT l.*, u.name as shipper_name, u.phone as shipper_phone, u.company_name as shipper_company,
              d.name as driver_name, d.phone as driver_phone, d.vehicle_type as driver_vehicle, d.vehicle_number as driver_vehicle_number
       FROM loads l 
       LEFT JOIN users u ON l.shipper_id = u.id 
       LEFT JOIN users d ON l.driver_id = d.id 
       WHERE l.id = ?
-    `).get(id) as any;
+    `, [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -102,22 +104,22 @@ export const getLoad = async (req: AuthRequest, res: Response): Promise<void> =>
     }
     
     // Get bids for this load
-    const bids = db.prepare(`
+    const bids = getAll(`
       SELECT b.*, u.name as driver_name, u.rating, u.total_jobs, u.vehicle_type, u.vehicle_number
       FROM bids b 
       LEFT JOIN users u ON b.driver_id = u.id 
       WHERE b.load_id = ?
       ORDER BY b.amount ASC
-    `).all(id);
+    `, [id]);
     
     // Get proof of delivery if delivered
     let pod = null;
     if (load.status === 'delivered') {
-      pod = db.prepare('SELECT * FROM proof_of_delivery WHERE load_id = ?').get(id);
+      pod = getOne('SELECT * FROM proof_of_delivery WHERE load_id = ?', [id]);
     }
     
     // Get location history
-    const locations = db.prepare('SELECT * FROM location_updates WHERE load_id = ? ORDER BY timestamp DESC LIMIT 100').all(id);
+    const locations = getAll('SELECT * FROM location_updates WHERE load_id = ? ORDER BY timestamp DESC LIMIT 100', [id]);
     
     res.json({
       success: true,
@@ -162,7 +164,7 @@ export const acceptLoad = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const { id } = req.params;
     
-    const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -175,39 +177,41 @@ export const acceptLoad = async (req: AuthRequest, res: Response): Promise<void>
     }
     
     // Check if driver is verified
-    const driver = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user?.userId) as any;
+    const driver = getOne('SELECT * FROM users WHERE id = ?', [req.user?.userId]);
     if (driver.document_status !== 'verified') {
       res.status(400).json({ success: false, error: 'Your documents are not verified yet' });
       return;
     }
     
     // Update load
-    db.prepare('UPDATE loads SET driver_id = ?, status = ?, current_status = ? WHERE id = ?')
-      .run(req.user?.userId, 'assigned', 'accepted', id);
+    runQuery('UPDATE loads SET driver_id = ?, status = ?, current_status = ? WHERE id = ?',
+      [req.user?.userId, 'assigned', 'accepted', id]);
     
     // Create payment record (escrow)
     const paymentId = uuidv4();
-    const platformFee = load.price * 0.05; // 5% platform fee
+    const platformFee = load.price * 0.05;
     const netAmount = load.price - platformFee;
     
-    db.prepare(`
+    runQuery(`
       INSERT INTO payments (id, load_id, shipper_id, driver_id, amount, platform_fee, net_amount, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'held')
-    `).run(paymentId, id, load.shipper_id, req.user?.userId, load.price, platformFee, netAmount);
+    `, [paymentId, id, load.shipper_id, req.user?.userId, load.price, platformFee, netAmount]);
     
     // Accept the driver's bid
-    db.prepare(`UPDATE bids SET status = 'accepted' WHERE load_id = ? AND driver_id = ?`).run(id, req.user?.userId);
+    runQuery(`UPDATE bids SET status = 'accepted' WHERE load_id = ? AND driver_id = ?`, [id, req.user?.userId]);
     
     // Reject all other bids
-    db.prepare(`UPDATE bids SET status = 'rejected' WHERE load_id = ? AND driver_id != ?`).run(id, req.user?.userId);
+    runQuery(`UPDATE bids SET status = 'rejected' WHERE load_id = ? AND driver_id != ?`, [id, req.user?.userId]);
     
     // Notify shipper
-    db.prepare(`
+    runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(uuidv4(), load.shipper_id, 'Bid Accepted', `Your load has been accepted by ${driver.name}`, 'load_accepted', id);
+    `, [uuidv4(), load.shipper_id, 'Bid Accepted', `Your load has been accepted by ${driver.name}`, 'load_accepted', id]);
     
-    const updatedLoad = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    saveDatabase();
+    
+    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     // Broadcast update
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
@@ -231,7 +235,7 @@ export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise
       return;
     }
     
-    const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -247,15 +251,15 @@ export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise
     let dbStatus = 'in_transit';
     if (status === 'delivered') dbStatus = 'delivered';
     
-    db.prepare('UPDATE loads SET current_status = ?, status = ? WHERE id = ?').run(status, dbStatus, id);
+    runQuery('UPDATE loads SET current_status = ?, status = ? WHERE id = ?', [status, dbStatus, id]);
     
     // If delivered, process payment release
     if (status === 'delivered') {
       // Update payment status
-      db.prepare("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?").run(id);
+      runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
       
       // Update driver stats
-      db.prepare('UPDATE users SET total_jobs = total_jobs + 1 WHERE id = ?').run(req.user?.userId);
+      runQuery('UPDATE users SET total_jobs = total_jobs + 1 WHERE id = ?', [req.user?.userId]);
     }
     
     // Notify shipper
@@ -268,13 +272,15 @@ export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise
     };
     
     if (statusMessages[status]) {
-      db.prepare(`
+      runQuery(`
         INSERT INTO notifications (id, user_id, title, message, type, reference_id)
         VALUES (?, ?, ?, ?, ?, ?)
-      `).run(uuidv4(), load.shipper_id, 'Status Update', statusMessages[status], 'status_update', id);
+      `, [uuidv4(), load.shipper_id, 'Status Update', statusMessages[status], 'status_update', id]);
     }
     
-    const updatedLoad = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    saveDatabase();
+    
+    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     // Broadcast update
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
@@ -291,7 +297,7 @@ export const updateLocation = async (req: AuthRequest, res: Response): Promise<v
     const { id } = req.params;
     const { latitude, longitude } = req.body;
     
-    const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -305,8 +311,10 @@ export const updateLocation = async (req: AuthRequest, res: Response): Promise<v
     
     // Store location update
     const locId = uuidv4();
-    db.prepare('INSERT INTO location_updates (id, load_id, driver_id, latitude, longitude) VALUES (?, ?, ?, ?, ?)')
-      .run(locId, id, req.user?.userId, latitude, longitude);
+    runQuery('INSERT INTO location_updates (id, load_id, driver_id, latitude, longitude) VALUES (?, ?, ?, ?, ?)',
+      [locId, id, req.user?.userId, latitude, longitude]);
+    
+    saveDatabase();
     
     // Broadcast to subscribers
     broadcastLocationUpdate(id, latitude, longitude);
@@ -322,7 +330,7 @@ export const cancelLoad = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const { id } = req.params;
     
-    const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -339,9 +347,11 @@ export const cancelLoad = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
     
-    db.prepare('UPDATE loads SET status = ? WHERE id = ?').run('cancelled', id);
+    runQuery('UPDATE loads SET status = ? WHERE id = ?', ['cancelled', id]);
     
-    const updatedLoad = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    saveDatabase();
+    
+    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
     
@@ -357,7 +367,7 @@ export const uploadProofOfDelivery = async (req: AuthRequest, res: Response): Pr
     const { id } = req.params;
     const { photos, signature, recipientName, deliveryNotes, latitude, longitude } = req.body;
     
-    const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -371,24 +381,26 @@ export const uploadProofOfDelivery = async (req: AuthRequest, res: Response): Pr
     
     const podId = uuidv4();
     
-    db.prepare(`
+    runQuery(`
       INSERT INTO proof_of_delivery (id, load_id, photos, signature, recipient_name, delivery_notes, latitude, longitude)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(podId, id, JSON.stringify(photos || []), signature, recipientName, deliveryNotes, latitude || 0, longitude || 0);
+    `, [podId, id, JSON.stringify(photos || []), signature, recipientName, deliveryNotes, latitude || 0, longitude || 0]);
     
     // Update load status to delivered
-    db.prepare("UPDATE loads SET status = 'delivered', current_status = 'delivered' WHERE id = ?").run(id);
+    runQuery("UPDATE loads SET status = 'delivered', current_status = 'delivered' WHERE id = ?", [id]);
     
     // Release payment
-    db.prepare("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?").run(id);
+    runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
     
     // Notify shipper
-    db.prepare(`
+    runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(uuidv4(), load.shipper_id, 'Proof of Delivery', 'Driver has uploaded proof of delivery. Please confirm.', 'pod_uploaded', id);
+    `, [uuidv4(), load.shipper_id, 'Proof of Delivery', 'Driver has uploaded proof of delivery. Please confirm.', 'pod_uploaded', id]);
     
-    const updatedLoad = db.prepare('SELECT * FROM loads WHERE id = ?').get(id) as any;
+    saveDatabase();
+    
+    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     res.json({ success: true, data: formatLoad(updatedLoad) });
   } catch (error) {

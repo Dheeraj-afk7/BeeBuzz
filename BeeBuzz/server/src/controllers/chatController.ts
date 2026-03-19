@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../services/database.js';
+import { getOne, getAll, runQuery, saveDatabase } from '../services/database.js';
 import { AuthRequest } from '../middleware/auth.js';
 
 export const sendMessage = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -14,19 +14,21 @@ export const sendMessage = async (req: AuthRequest, res: Response): Promise<void
     
     const messageId = uuidv4();
     
-    db.prepare(`
+    runQuery(`
       INSERT INTO chat_messages (id, load_id, sender_id, receiver_id, message)
       VALUES (?, ?, ?, ?, ?)
-    `).run(messageId, loadId, req.user?.userId, receiverId, message);
+    `, [messageId, loadId, req.user?.userId, receiverId, message]);
     
     // Notify receiver
-    const sender = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user?.userId) as any;
-    db.prepare(`
+    const sender = getOne('SELECT name FROM users WHERE id = ?', [req.user?.userId]);
+    runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(uuidv4(), receiverId, 'New Message', `${sender.name}: ${message.substring(0, 50)}...`, 'new_message', loadId);
+    `, [uuidv4(), receiverId, 'New Message', `${sender.name}: ${message.substring(0, 50)}...`, 'new_message', loadId]);
     
-    const newMessage = db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(messageId) as any;
+    saveDatabase();
+    
+    const newMessage = getOne('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
     
     res.status(201).json({ success: true, data: formatMessage(newMessage) });
   } catch (error) {
@@ -39,13 +41,13 @@ export const getMessages = async (req: AuthRequest, res: Response): Promise<void
   try {
     const { loadId } = req.params;
     
-    const messages = db.prepare(`
+    const messages = getAll(`
       SELECT m.*, u.name as sender_name, u.profile_photo as sender_photo
       FROM chat_messages m
       LEFT JOIN users u ON m.sender_id = u.id
       WHERE m.load_id = ?
       ORDER BY m.created_at ASC
-    `).all(loadId);
+    `, [loadId]);
     
     res.json({ success: true, data: messages.map(formatMessage) });
   } catch (error) {

@@ -1,0 +1,9 @@
+{
+  "name": "beebuzz",
+  "scripts": {
+    "dev": "concurrently \"npm --prefix BeeBuzz/server run dev\" \"npm --prefix BeeBuzz/client run dev\""
+  },
+  "dependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

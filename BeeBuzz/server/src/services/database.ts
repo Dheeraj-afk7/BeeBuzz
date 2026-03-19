@@ -1,11 +1,10 @@
+
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
 
-// Simpler path - saves in project root /data folder
 const dbPath = path.join(process.cwd(), 'data', 'beebuzz.db');
 
-// Ensure data directory exists
 const dataDir = path.dirname(dbPath);
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -13,11 +12,10 @@ if (!fs.existsSync(dataDir)) {
 
 let db: SqlJsDatabase | null = null;
 
-// Initialize database
+// Use "export async function" instead of "export default"
 export async function initDatabase() {
   const SQL = await initSqlJs();
   
-  // Load existing database or create new one
   if (fs.existsSync(dbPath)) {
     const fileBuffer = fs.readFileSync(dbPath);
     db = new SQL.Database(fileBuffer);
@@ -200,7 +198,7 @@ function initializeTables() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_location_load ON location_updates(load_id)`);
 
-  saveDatabase();
+  saveDatabase(); // Save after creating tables
 }
 
 export function getDb() {
@@ -215,4 +213,37 @@ export function saveDatabase() {
   fs.writeFileSync(dbPath, buffer);
 }
 
-export default { initDatabase, getDb, saveDatabase };
+// Helper functions for easier query execution
+export function runQuery(sql: string, params: any[] = []): void {
+  const database = getDb();
+  const stmt = database.prepare(sql);
+  stmt.bind(params);
+  stmt.step();
+  stmt.free();
+}
+
+export function getOne(sql: string, params: any[] = []): any {
+  const database = getDb();
+  const stmt = database.prepare(sql);
+  stmt.bind(params);
+  
+  let result = null;
+  if (stmt.step()) {
+    result = stmt.getAsObject();
+  }
+  stmt.free();
+  return result;
+}
+
+export function getAll(sql: string, params: any[] = []): any[] {
+  const database = getDb();
+  const stmt = database.prepare(sql);
+  stmt.bind(params);
+  
+  const results: any[] = [];
+  while (stmt.step()) {
+    results.push(stmt.getAsObject());
+  }
+  stmt.free();
+  return results;
+}

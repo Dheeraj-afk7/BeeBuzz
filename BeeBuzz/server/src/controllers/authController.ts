@@ -2,7 +2,7 @@ import { Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../services/database.js';
+import { getOne, getAll, runQuery, saveDatabase } from '../services/database.js'; 
 import { AuthRequest } from '../middleware/auth.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'beebuzz-secret-key-2024';
@@ -11,40 +11,36 @@ export const register = async (req: AuthRequest, res: Response): Promise<void> =
   try {
     const { email, password, name, phone, role, companyName, gstin, licenseNumber, vehicleType, vehicleNumber } = req.body;
     
-    // Validate required fields
     if (!email || !password || !name || !phone || !role) {
       res.status(400).json({ success: false, error: 'All fields are required' });
       return;
     }
     
-    // Check if user exists
-    const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existingUser = getOne('SELECT id FROM users WHERE email = ?', [email]);
     if (existingUser) {
       res.status(400).json({ success: false, error: 'Email already registered' });
       return;
     }
     
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
     const userId = uuidv4();
     
-    // Determine document status for drivers
     let documentStatus = 'pending';
     let isVerified = 0;
     if (role === 'driver') {
-      documentStatus = licenseNumber ? 'pending' : 'pending';
+      documentStatus = 'pending';
     }
     
-    // Insert user
-    db.prepare(`
+    runQuery(`
       INSERT INTO users (id, email, password, name, phone, role, company_name, gstin, license_number, vehicle_type, vehicle_number, document_status, is_verified)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(userId, email, hashedPassword, name, phone, role, companyName || null, gstin || null, licenseNumber || null, vehicleType || null, vehicleNumber || null, documentStatus, isVerified);
+    `, [userId, email, hashedPassword, name, phone, role, companyName || null, gstin || null, licenseNumber || null, vehicleType || null, vehicleNumber || null, documentStatus, isVerified]);
     
-    // Generate token
+    saveDatabase(); 
+
     const token = jwt.sign({ userId, email, role }, JWT_SECRET, { expiresIn: '7d' });
     
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+    const user = getOne('SELECT * FROM users WHERE id = ?', [userId]);
     
     res.status(201).json({
       success: true,
@@ -68,21 +64,18 @@ export const login = async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
     
-    // Find user
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+    const user = getOne('SELECT * FROM users WHERE email = ?', [email]);
     if (!user) {
       res.status(401).json({ success: false, error: 'Invalid email or password' });
       return;
     }
     
-    // Check password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       res.status(401).json({ success: false, error: 'Invalid email or password' });
       return;
     }
     
-    // Generate token
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
       JWT_SECRET,
@@ -104,7 +97,7 @@ export const login = async (req: AuthRequest, res: Response): Promise<void> => {
 
 export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user?.userId) as any;
+    const user = getOne('SELECT * FROM users WHERE id = ?', [req.user!.userId]);
     
     if (!user) {
       res.status(404).json({ success: false, error: 'User not found' });
@@ -122,35 +115,30 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
   try {
     const { name, phone, companyName, gstin, address, licenseNumber, insuranceNumber, vehicleType, vehicleNumber, rcNumber, profilePhoto } = req.body;
     
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user?.userId) as any;
+    const userId = req.user!.userId;
+    
+    const user = getOne('SELECT * FROM users WHERE id = ?', [userId]);
     
     if (!user) {
       res.status(404).json({ success: false, error: 'User not found' });
       return;
     }
     
-    // Update fields
-    db.prepare(`
+    runQuery(`
       UPDATE users SET 
-        name = COALESCE(?, name),
-        phone = COALESCE(?, phone),
-        company_name = COALESCE(?, company_name),
-        gstin = COALESCE(?, gstin),
-        address = COALESCE(?, address),
-        license_number = COALESCE(?, license_number),
-        insurance_number = COALESCE(?, insurance_number),
-        vehicle_type = COALESCE(?, vehicle_type),
-        vehicle_number = COALESCE(?, vehicle_number),
-        rc_number = COALESCE(?, rc_number),
-        profile_photo = COALESCE(?, profile_photo),
-        document_status = CASE 
-          WHEN license_number IS NOT NULL AND license_number != '' THEN 'pending' 
-          ELSE document_status 
-        END
+        name = ?, phone = ?, company_name = ?, gstin = ?, address = ?, 
+        license_number = ?, insurance_number = ?, vehicle_type = ?, vehicle_number = ?, 
+        rc_number = ?, profile_photo = ?
       WHERE id = ?
-    `).run(name, phone, companyName, gstin, address, licenseNumber, insuranceNumber, vehicleType, vehicleNumber, rcNumber, profilePhoto, req.user?.userId);
+    `, [
+      name || null, phone || null, companyName || null, gstin || null, address || null,
+      licenseNumber || null, insuranceNumber || null, vehicleType || null, vehicleNumber || null,
+      rcNumber || null, profilePhoto || null, userId
+    ]);
     
-    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user?.userId) as any;
+    saveDatabase();
+
+    const updatedUser = getOne('SELECT * FROM users WHERE id = ?', [userId]);
     
     res.json({ success: true, data: formatUser(updatedUser) });
   } catch (error) {
@@ -163,10 +151,14 @@ export const uploadDocument = async (req: AuthRequest, res: Response): Promise<v
   try {
     const { documentType, documentPhoto } = req.body;
     
-    // This would handle file upload in production
-    // For now, we'll just update the document status
+    if (!documentType || !documentPhoto) {
+        res.status(400).json({ success: false, error: 'Document type and photo are required' });
+        return;
+    }
+
+    const userId = req.user!.userId;
     
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user?.userId) as any;
+    const user = getOne('SELECT * FROM users WHERE id = ?', [userId]);
     
     if (!user) {
       res.status(404).json({ success: false, error: 'User not found' });
@@ -189,7 +181,9 @@ export const uploadDocument = async (req: AuthRequest, res: Response): Promise<v
         return;
     }
     
-    db.prepare(`UPDATE users SET ${updateField}, document_status = 'pending' WHERE id = ?`).run(documentPhoto, req.user?.userId);
+    runQuery(`UPDATE users SET ${updateField}, document_status = 'pending' WHERE id = ?`, [documentPhoto, userId]);
+    
+    saveDatabase();
     
     res.json({ success: true, message: 'Document uploaded successfully' });
   } catch (error) {

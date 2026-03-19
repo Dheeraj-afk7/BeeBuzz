@@ -1,10 +1,10 @@
 import { Response } from 'express';
-import db from '../services/database.js';
+import { getOne, getAll, runQuery, saveDatabase } from '../services/database.js';
 import { AuthRequest } from '../middleware/auth.js';
 
 export const getEarnings = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const payments = db.prepare(`
+    const payments = getAll(`
       SELECT p.*, l.pickup_address, l.delivery_address, l.cargo_type,
              u.name as shipper_name
       FROM payments p
@@ -12,15 +12,15 @@ export const getEarnings = async (req: AuthRequest, res: Response): Promise<void
       LEFT JOIN users u ON l.shipper_id = u.id
       WHERE p.driver_id = ?
       ORDER BY p.created_at DESC
-    `).all(req.user?.userId) as any[];
+    `, [req.user?.userId]);
     
-    const pending = db.prepare(`
+    const pending = getOne(`
       SELECT SUM(net_amount) as total FROM payments WHERE driver_id = ? AND status = 'held'
-    `).get(req.user?.userId) as any;
+    `, [req.user?.userId]);
     
-    const totalEarnings = db.prepare(`
+    const totalEarnings = getOne(`
       SELECT SUM(net_amount) as total FROM payments WHERE driver_id = ? AND status = 'released'
-    `).get(req.user?.userId) as any;
+    `, [req.user?.userId]);
     
     res.json({
       success: true,
@@ -39,11 +39,10 @@ export const getEarnings = async (req: AuthRequest, res: Response): Promise<void
 export const getPayments = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { role } = req.query;
-    
     let payments: any[];
     
     if (role === 'shipper' || req.user?.role === 'shipper') {
-      payments = db.prepare(`
+      payments = getAll(`
         SELECT p.*, l.pickup_address, l.delivery_address,
                d.name as driver_name
         FROM payments p
@@ -51,9 +50,9 @@ export const getPayments = async (req: AuthRequest, res: Response): Promise<void
         LEFT JOIN users d ON p.driver_id = d.id
         WHERE p.shipper_id = ?
         ORDER BY p.created_at DESC
-      `).all(req.user?.userId);
+      `, [req.user?.userId]);
     } else {
-      payments = db.prepare(`
+      payments = getAll(`
         SELECT p.*, l.pickup_address, l.delivery_address,
                u.name as shipper_name
         FROM payments p
@@ -61,7 +60,7 @@ export const getPayments = async (req: AuthRequest, res: Response): Promise<void
         LEFT JOIN users u ON l.shipper_id = u.id
         WHERE p.driver_id = ?
         ORDER BY p.created_at DESC
-      `).all(req.user?.userId);
+      `, [req.user?.userId]);
     }
     
     res.json({ success: true, data: payments.map(formatPayment) });
