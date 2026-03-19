@@ -7,8 +7,18 @@ export const createLoad = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const { pickupAddress, pickupLat, pickupLng, deliveryAddress, deliveryLat, deliveryLng, cargoType, cargoWeight, cargoDimensions, truckType, specialRequirements, pickupDate, deliveryDate, price } = req.body;
     
+    // Convert undefined to null
+    const _pickupLat = pickupLat ?? null;
+    const _pickupLng = pickupLng ?? null;
+    const _deliveryLat = deliveryLat ?? null;
+    const _deliveryLng = deliveryLng ?? null;
+    const _cargoWeight = cargoWeight ?? 0;
+    const _cargoDimensions = cargoDimensions ?? null;
+    const _specialRequirements = specialRequirements ?? null;
+    const _price = price ?? 0;
+    
     // Validate required fields
-    if (!pickupAddress || !deliveryAddress || !cargoType || !cargoWeight || !truckType || !pickupDate || !deliveryDate || !price) {
+    if (!pickupAddress || !deliveryAddress || !cargoType || !_cargoWeight || !truckType || !pickupDate || !deliveryDate || !_price) {
       res.status(400).json({ success: false, error: 'All required fields must be provided' });
       return;
     }
@@ -18,7 +28,7 @@ export const createLoad = async (req: AuthRequest, res: Response): Promise<void>
     runQuery(`
       INSERT INTO loads (id, shipper_id, pickup_address, pickup_lat, pickup_lng, delivery_address, delivery_lat, delivery_lng, cargo_type, cargo_weight, cargo_dimensions, truck_type, special_requirements, pickup_date, delivery_date, price, status, current_status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'pending')
-    `, [loadId, req.user?.userId, pickupAddress, pickupLat, pickupLng, deliveryAddress, deliveryLat, deliveryLng, cargoType, cargoWeight, cargoDimensions, truckType, specialRequirements, pickupDate, deliveryDate, price]);
+    `, [loadId, req.user?.userId, pickupAddress, _pickupLat, _pickupLng, deliveryAddress, _deliveryLat, _deliveryLng, cargoType, _cargoWeight, _cargoDimensions, truckType, _specialRequirements, pickupDate, deliveryDate, _price]);
     
     // Notify drivers about new load
     const drivers = getAll("SELECT id FROM users WHERE role = 'driver' AND document_status = 'verified'");
@@ -27,8 +37,6 @@ export const createLoad = async (req: AuthRequest, res: Response): Promise<void>
       runQuery('INSERT INTO notifications (id, user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?, ?)',
         [uuidv4(), driver.id, 'New Load Available', `New ${cargoType} load from ${pickupAddress.split(',')[0]} to ${deliveryAddress.split(',')[0]}`, 'new_load', loadId]);
     });
-    
-    saveDatabase();
     
     const load = getOne('SELECT * FROM loads WHERE id = ?', [loadId]);
     
@@ -209,8 +217,6 @@ export const acceptLoad = async (req: AuthRequest, res: Response): Promise<void>
       VALUES (?, ?, ?, ?, ?, ?)
     `, [uuidv4(), load.shipper_id, 'Bid Accepted', `Your load has been accepted by ${driver.name}`, 'load_accepted', id]);
     
-    saveDatabase();
-    
     const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     // Broadcast update
@@ -255,10 +261,7 @@ export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise
     
     // If delivered, process payment release
     if (status === 'delivered') {
-      // Update payment status
       runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
-      
-      // Update driver stats
       runQuery('UPDATE users SET total_jobs = total_jobs + 1 WHERE id = ?', [req.user?.userId]);
     }
     
@@ -278,11 +281,7 @@ export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise
       `, [uuidv4(), load.shipper_id, 'Status Update', statusMessages[status], 'status_update', id]);
     }
     
-    saveDatabase();
-    
     const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
-    
-    // Broadcast update
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
     
     res.json({ success: true, data: formatLoad(updatedLoad) });
@@ -309,15 +308,11 @@ export const updateLocation = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
     
-    // Store location update
     const locId = uuidv4();
     runQuery('INSERT INTO location_updates (id, load_id, driver_id, latitude, longitude) VALUES (?, ?, ?, ?, ?)',
-      [locId, id, req.user?.userId, latitude, longitude]);
+      [locId, id, req.user?.userId, latitude ?? 0, longitude ?? 0]);
     
-    saveDatabase();
-    
-    // Broadcast to subscribers
-    broadcastLocationUpdate(id, latitude, longitude);
+    broadcastLocationUpdate(id, latitude ?? 0, longitude ?? 0);
     
     res.json({ success: true, data: { latitude, longitude, timestamp: new Date().toISOString() } });
   } catch (error) {
@@ -349,10 +344,7 @@ export const cancelLoad = async (req: AuthRequest, res: Response): Promise<void>
     
     runQuery('UPDATE loads SET status = ? WHERE id = ?', ['cancelled', id]);
     
-    saveDatabase();
-    
     const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
-    
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
     
     res.json({ success: true, data: formatLoad(updatedLoad) });
@@ -384,21 +376,15 @@ export const uploadProofOfDelivery = async (req: AuthRequest, res: Response): Pr
     runQuery(`
       INSERT INTO proof_of_delivery (id, load_id, photos, signature, recipient_name, delivery_notes, latitude, longitude)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [podId, id, JSON.stringify(photos || []), signature, recipientName, deliveryNotes, latitude || 0, longitude || 0]);
+    `, [podId, id, JSON.stringify(photos || []), signature, recipientName, deliveryNotes, latitude ?? 0, longitude ?? 0]);
     
-    // Update load status to delivered
     runQuery("UPDATE loads SET status = 'delivered', current_status = 'delivered' WHERE id = ?", [id]);
-    
-    // Release payment
     runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
     
-    // Notify shipper
     runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [uuidv4(), load.shipper_id, 'Proof of Delivery', 'Driver has uploaded proof of delivery. Please confirm.', 'pod_uploaded', id]);
-    
-    saveDatabase();
     
     const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
     

@@ -1,4 +1,3 @@
-
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
@@ -9,6 +8,9 @@ const dataDir = path.dirname(dbPath);
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
+
+// Debug: show database path
+console.log('Database path:', dbPath);
 
 let db: SqlJsDatabase | null = null;
 
@@ -198,7 +200,7 @@ function initializeTables() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_location_load ON location_updates(load_id)`);
 
-  saveDatabase(); // Save after creating tables
+  saveDatabase();
 }
 
 export function getDb() {
@@ -207,25 +209,49 @@ export function getDb() {
 }
 
 export function saveDatabase() {
-  if (!db) return;
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(dbPath, buffer);
+  if (!db) {
+    console.log('DB is null, cannot save');
+    return;
+  }
+  
+  try {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(dbPath, buffer);
+    console.log('✅ Database saved to:', dbPath);
+  } catch (error) {
+    console.error('Error saving database:', error);
+  }
 }
 
-// Helper functions for easier query execution
+// Helper functions - with undefined to null conversion
 export function runQuery(sql: string, params: any[] = []): void {
   const database = getDb();
   const stmt = database.prepare(sql);
-  stmt.bind(params);
-  stmt.step();
-  stmt.free();
+  
+  // Convert undefined to null for all params
+  const safeParams = params.map((p: any) => p === undefined ? null : p);
+  
+  try {
+    stmt.bind(safeParams);
+    stmt.step();
+  } catch (err) {
+    console.error('Query error:', err);
+    console.error('SQL:', sql);
+  } finally {
+    stmt.free();
+  }
+  
+  saveDatabase();
 }
 
 export function getOne(sql: string, params: any[] = []): any {
   const database = getDb();
   const stmt = database.prepare(sql);
-  stmt.bind(params);
+  
+  // Convert undefined to null
+  const safeParams = params.map((p: any) => p === undefined ? null : p);
+  stmt.bind(safeParams);
   
   let result = null;
   if (stmt.step()) {
@@ -238,7 +264,10 @@ export function getOne(sql: string, params: any[] = []): any {
 export function getAll(sql: string, params: any[] = []): any[] {
   const database = getDb();
   const stmt = database.prepare(sql);
-  stmt.bind(params);
+  
+  // Convert undefined to null
+  const safeParams = params.map((p: any) => p === undefined ? null : p);
+  stmt.bind(safeParams);
   
   const results: any[] = [];
   while (stmt.step()) {

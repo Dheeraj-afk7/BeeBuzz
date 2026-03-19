@@ -4,7 +4,7 @@ import axios from 'axios';
 import { mockAuthApi, mockLoadApi, mockPaymentApi } from './mockApi.tsx';
 
 // Set this to true to use mock API (no backend needed)
-const USE_MOCK_API = true;
+const USE_MOCK_API = false;
 
 // Real API instance
 const api = axios.create({
