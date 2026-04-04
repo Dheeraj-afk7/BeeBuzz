@@ -170,6 +170,15 @@ const LoadDetail: React.FC = () => {
     finally { setUpdating(false); }
   };
 
+  const handleAcceptBid = async (bidId: string) => {
+    setUpdating(true);
+    try {
+      await bidApi.accept(bidId);
+      loadLoad();
+    } catch (error) { console.error('Failed to accept bid:', error); }
+    finally { setUpdating(false); }
+  };
+
   const handleEditBid = async (e: React.FormEvent) => {
     e.preventDefault();
     setUpdating(true);
@@ -390,7 +399,7 @@ const LoadDetail: React.FC = () => {
                       <span className="bid-rating">⭐ {bid.driverRating.toFixed(1)} • {bid.driverTotalJobs} jobs</span>
                     </div>
                     <div className="bid-amount">₹{bid.amount.toLocaleString()}</div>
-                    {bid.status === 'pending' && <button className="btn btn-success btn-sm" onClick={() => bidApi.accept(bid.id)}>Accept</button>}
+                    {bid.status === 'pending' && <button className="btn btn-success btn-sm" onClick={() => handleAcceptBid(bid.id)} disabled={updating}>Accept</button>}
                     <span className={`badge badge-${bid.status}`}>{bid.status}</span>
                   </div>
                 ))}

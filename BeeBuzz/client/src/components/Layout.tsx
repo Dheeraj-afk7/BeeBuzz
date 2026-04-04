@@ -9,6 +9,12 @@ const Layout: React.FC = () => {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     const fetchNotifications = async () => {
@@ -104,6 +110,14 @@ const Layout: React.FC = () => {
             {isDriver ? '🐝 Driver Portal' : '🌸 Shipper Portal'}
           </div>
           <div className="top-bar-actions">
+            <button 
+              className="btn btn-ghost" 
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              style={{ fontSize: '1.2rem', padding: '8px 12px', marginRight: '8px' }}
+              title="Toggle Light/Dark Mode"
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
             <div className="connection-status">
               <span className="status-dot online"></span>
               Live
