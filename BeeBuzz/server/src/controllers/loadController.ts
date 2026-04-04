@@ -395,6 +395,54 @@ export const uploadProofOfDelivery = async (req: AuthRequest, res: Response): Pr
   }
 };
 
+export const updateLoad = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { pickupAddress, pickupLat, pickupLng, deliveryAddress, deliveryLat, deliveryLng, cargoType, cargoWeight, truckType, specialRequirements, pickupDate, deliveryDate, price } = req.body;
+    
+    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+    
+    if (load.shipper_id !== req.user?.userId && req.user?.role !== 'admin') {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+    
+    if (load.status !== 'open') {
+      res.status(400).json({ success: false, error: 'Cannot edit a load that is no longer open' });
+      return;
+    }
+
+    runQuery(`
+      UPDATE loads SET 
+        pickup_address = ?, pickup_lat = ?, pickup_lng = ?, 
+        delivery_address = ?, delivery_lat = ?, delivery_lng = ?, 
+        cargo_type = ?, cargo_weight = ?, truck_type = ?, 
+        special_requirements = ?, pickup_date = ?, delivery_date = ?, price = ?
+      WHERE id = ?
+    `, [
+      pickupAddress || load.pickup_address, pickupLat ?? load.pickup_lat, pickupLng ?? load.pickup_lng,
+      deliveryAddress || load.delivery_address, deliveryLat ?? load.delivery_lat, deliveryLng ?? load.delivery_lng,
+      cargoType || load.cargo_type, cargoWeight ?? load.cargo_weight, truckType || load.truck_type,
+      specialRequirements ?? load.special_requirements, pickupDate || load.pickup_date, deliveryDate || load.delivery_date, price ?? load.price,
+      id
+    ]);
+    
+    saveDatabase();
+    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    broadcastLoadUpdate(id, formatLoad(updatedLoad));
+    
+    res.json({ success: true, data: formatLoad(updatedLoad) });
+  } catch (error) {
+    console.error('Update load error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
 function formatLoad(load: any) {
   return {
     id: load.id,
@@ -450,4 +498,4 @@ function broadcastLocationUpdate(loadId: string, lat: number, lng: number) {
   }
 }
 
-export default { createLoad, getLoads, getLoad, acceptLoad, updateLoadStatus, updateLocation, cancelLoad, uploadProofOfDelivery };
+export default { createLoad, getLoads, getLoad, updateLoad, acceptLoad, updateLoadStatus, updateLocation, cancelLoad, uploadProofOfDelivery };

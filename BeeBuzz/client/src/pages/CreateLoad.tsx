@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loadApi } from '../services/api';
+import LocationPicker from '../components/LocationPicker';
 
 const CreateLoad: React.FC = () => {
   const navigate = useNavigate();
@@ -11,9 +12,57 @@ const CreateLoad: React.FC = () => {
     deliveryAddress: '', deliveryLat: 19.0760, deliveryLng: 72.8777,
     cargoType: '', cargoWeight: '', truckType: '', pickupDate: '', deliveryDate: '', price: '', specialRequirements: ''
   });
+  const [recommendedPrice, setRecommendedPrice] = useState<number | null>(null);
+  const [distance, setDistance] = useState<number | null>(null);
+
+  useEffect(() => {
+    const { pickupLat, pickupLng, deliveryLat, deliveryLng, cargoWeight, truckType } = form;
+    if (pickupLat && deliveryLat && cargoWeight && truckType) {
+      const fetchPricing = async () => {
+        try {
+          const url = `https://router.project-osrm.org/route/v1/driving/${pickupLng},${pickupLat};${deliveryLng},${deliveryLat}?overview=false`;
+          const res = await fetch(url);
+          const data = await res.json();
+          if (data.routes && data.routes.length > 0) {
+            const distanceKM = data.routes[0].distance / 1000;
+            setDistance(distanceKM);
+            
+            let rate = 20;
+            const type = truckType.toLowerCase();
+            if (type.includes('pickup')) rate = 15;
+            else if (type.includes('mini')) rate = 18;
+            else if (type.includes('lorry')) rate = 25;
+            else if (type.includes('container')) rate = 35;
+            else if (type.includes('flatbed')) rate = 40;
+            
+            let multiplier = 1;
+            const weight = parseFloat(cargoWeight);
+            if (weight > 500) multiplier = 1.1;
+            if (weight > 1000) multiplier = 1.25;
+            
+            setRecommendedPrice(Math.round(distanceKM * rate * multiplier));
+          }
+        } catch (e) {
+          console.error("OSRM failed route fetch", e);
+        }
+      };
+      
+      const timer = setTimeout(() => fetchPricing(), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [form.pickupLat, form.pickupLng, form.deliveryLat, form.deliveryLng, form.cargoWeight, form.truckType]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const handleLocationSelect = (type: 'pickup' | 'delivery', address: string, lat: number, lng: number) => {
+    setForm(prev => ({
+      ...prev,
+      [`${type}Address`]: address,
+      [`${type}Lat`]: lat,
+      [`${type}Lng`]: lng,
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -35,19 +84,21 @@ const CreateLoad: React.FC = () => {
           {error && <div className="form-error-banner">{error}</div>}
           <div className="form-section">
             <h3>📍 Pickup Location</h3>
-            <div className="form-group"><label className="form-label">Address</label><input type="text" name="pickupAddress" className="input" value={form.pickupAddress} onChange={handleChange} placeholder="Enter pickup address" required /></div>
-            <div className="form-row">
-              <div className="form-group"><label className="form-label">Latitude</label><input type="number" step="any" name="pickupLat" className="input" value={form.pickupLat} onChange={handleChange} required /></div>
-              <div className="form-group"><label className="form-label">Longitude</label><input type="number" step="any" name="pickupLng" className="input" value={form.pickupLng} onChange={handleChange} required /></div>
-            </div>
+            <LocationPicker 
+              label="Search address or click on map" 
+              defaultLat={form.pickupLat}
+              defaultLng={form.pickupLng}
+              onLocationSelect={(addr, lat, lng) => handleLocationSelect('pickup', addr, lat, lng)} 
+            />
           </div>
           <div className="form-section">
             <h3>🏁 Delivery Location</h3>
-            <div className="form-group"><label className="form-label">Address</label><input type="text" name="deliveryAddress" className="input" value={form.deliveryAddress} onChange={handleChange} placeholder="Enter delivery address" required /></div>
-            <div className="form-row">
-              <div className="form-group"><label className="form-label">Latitude</label><input type="number" step="any" name="deliveryLat" className="input" value={form.deliveryLat} onChange={handleChange} required /></div>
-              <div className="form-group"><label className="form-label">Longitude</label><input type="number" step="any" name="deliveryLng" className="input" value={form.deliveryLng} onChange={handleChange} required /></div>
-            </div>
+            <LocationPicker 
+              label="Search address or click on map" 
+              defaultLat={form.deliveryLat}
+              defaultLng={form.deliveryLng}
+              onLocationSelect={(addr, lat, lng) => handleLocationSelect('delivery', addr, lat, lng)} 
+            />
           </div>
           <div className="form-section">
             <h3>📦 Cargo Details</h3>
@@ -82,8 +133,15 @@ const CreateLoad: React.FC = () => {
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Offer Price (₹)</label>
-                <input type="number" name="price" className="input" value={form.price} onChange={handleChange} placeholder="0" required />
+                <label className="form-label" style={{display:'flex', justifyContent:'space-between', alignItems: 'center'}}>
+                  <span>Offer Price (₹)</span>
+                  {recommendedPrice && distance !== null && (
+                    <span style={{color: '#4A90E2', fontSize: '12px', fontWeight: 'bold'}}>
+                      ✨ AI Fare: ₹{recommendedPrice.toLocaleString()} ({distance.toFixed(1)} km)
+                    </span>
+                  )}
+                </label>
+                <input type="number" name="price" className="input" value={form.price} onChange={handleChange} placeholder={recommendedPrice ? `e.g. ${recommendedPrice}` : "0"} required />
               </div>
             </div>
             <div className="form-group"><label className="form-label">Special Requirements</label><textarea name="specialRequirements" className="input textarea" value={form.specialRequirements} onChange={handleChange} placeholder="Any special instructions..." rows={2} /></div>

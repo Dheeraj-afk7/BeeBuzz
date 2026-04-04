@@ -134,6 +134,11 @@ export const mockLoadApi = {
     return { data: { data: newLoad } };
   },
 
+  update: async (_id: string, _data: any) => {
+    await delay(500);
+    return { data: { success: true } };
+  },
+
   updateStatus: async (id: string, status: string) => {
     await delay(500);
     const load = mockLoads.find(l => l.id === id);

@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const bidController_js_1 = require("../controllers/bidController.js");
+const auth_js_1 = require("../middleware/auth.js");
+const router = (0, express_1.Router)();
+router.use(auth_js_1.authenticate);
+router.post('/', (0, auth_js_1.authorize)('driver', 'admin'), bidController_js_1.createBid);
+router.get('/load/:loadId', bidController_js_1.getBids);
+router.get('/my', (0, auth_js_1.authorize)('driver', 'admin'), bidController_js_1.getMyBids);
+router.put('/:bidId', (0, auth_js_1.authorize)('driver', 'admin'), bidController_js_1.updateBid);
+router.put('/:bidId/accept', (0, auth_js_1.authorize)('shipper', 'admin'), bidController_js_1.acceptBid);
+router.put('/:bidId/reject', (0, auth_js_1.authorize)('shipper', 'admin'), bidController_js_1.rejectBid);
+exports.default = router;

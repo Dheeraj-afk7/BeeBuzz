@@ -118,24 +118,58 @@
   font-size: 1.25rem;
 }
 
-/* Location Update */
-.location-update {
+/* Map Display */
+.map-container {
   margin-top: 20px;
   padding: 16px;
-  background: rgba(46, 204, 113, 0.1);
-  border: 1px solid var(--success);
-  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
 }
 
-.location-update h4 {
-  font-size: 0.9rem;
+.map-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 8px;
-  color: var(--success);
 }
 
-.location-update p {
+.map-header h4 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.live-indicator {
+  display: inline-block;
+  padding: 4px 8px;
+  background: rgba(255, 68, 68, 0.1);
+  color: #ff4444;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  animation: pulse 2s infinite;
+}
+
+.live-indicator::before {
+  content: '● REC';
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.4);
+  }
+
+  70% {
+    box-shadow: 0 0 0 4px rgba(255, 68, 68, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 68, 68, 0);
+  }
+}
+
+.map-footer {
   font-family: monospace;
-  font-size: 0.85rem;
 }
 
 /* Cargo Info */
@@ -369,6 +403,7 @@
     transform: translateX(100%);
     opacity: 0;
   }
+
   to {
     transform: translateX(0);
     opacity: 1;

@@ -1,0 +1,17 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const loadController_js_1 = require("../controllers/loadController.js");
+const auth_js_1 = require("../middleware/auth.js");
+const router = (0, express_1.Router)();
+router.use(auth_js_1.authenticate);
+router.post('/', (0, auth_js_1.authorize)('shipper', 'admin'), loadController_js_1.createLoad);
+router.get('/', loadController_js_1.getLoads);
+router.get('/:id', loadController_js_1.getLoad);
+router.put('/:id', (0, auth_js_1.authorize)('shipper', 'admin'), loadController_js_1.updateLoad);
+router.post('/:id/accept', (0, auth_js_1.authorize)('driver', 'admin'), loadController_js_1.acceptLoad);
+router.put('/:id/status', (0, auth_js_1.authorize)('driver', 'admin'), loadController_js_1.updateLoadStatus);
+router.put('/:id/location', (0, auth_js_1.authorize)('driver', 'admin'), loadController_js_1.updateLocation);
+router.put('/:id/pod', (0, auth_js_1.authorize)('driver', 'admin'), loadController_js_1.uploadProofOfDelivery);
+router.delete('/:id', (0, auth_js_1.authorize)('shipper', 'admin'), loadController_js_1.cancelLoad);
+exports.default = router;

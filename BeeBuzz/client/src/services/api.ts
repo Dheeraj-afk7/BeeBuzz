@@ -34,6 +34,7 @@ api.interceptors.response.use(
 
 const mockBidApi = {
   create: async () => ({ data: { success: true } }),
+  update: async () => ({ data: { success: true } }),
   getForLoad: async () => ({ data: { data: [] } }),
   getMyBids: async () => ({ data: { data: [] } }),
   accept: async () => ({ data: { success: true } }),
@@ -63,7 +64,8 @@ const realAuthApi = {
 const realLoadApi = {
   create: (data: any) => api.post('/loads', data),
   getAll: (params?: any) => api.get('/loads', { params }),
-  getOne: (id: string) => api.get(`/loads/${id}`),
+  getOne: (id: string) => api.get(`/loads/${id}?_t=${Date.now()}`),
+  update: (id: string, data: any) => api.put(`/loads/${id}`, data),
   accept: (id: string) => api.post(`/loads/${id}/accept`),
   updateStatus: (id: string, status: string, notes?: string) => 
     api.put(`/loads/${id}/status`, { status, notes }),
@@ -77,6 +79,7 @@ const realBidApi = {
   create: (data: any) => api.post('/bids', data),
   getForLoad: (loadId: string) => api.get(`/bids/load/${loadId}`),
   getMyBids: () => api.get('/bids/my'),
+  update: (bidId: string, data: any) => api.put(`/bids/${bidId}`, data),
   accept: (bidId: string) => api.put(`/bids/${bidId}/accept`),
   reject: (bidId: string) => api.put(`/bids/${bidId}/reject`)
 };

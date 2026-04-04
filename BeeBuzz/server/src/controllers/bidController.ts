@@ -187,6 +187,48 @@ export const rejectBid = async (req: AuthRequest, res: Response): Promise<void> 
   }
 };
 
+export const updateBid = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { bidId } = req.params;
+    const { amount, notes, estimatedArrival } = req.body;
+    
+    const bid = getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
+    
+    if (!bid) {
+      res.status(404).json({ success: false, error: 'Bid not found' });
+      return;
+    }
+    
+    if (bid.driver_id !== req.user?.userId && req.user?.role !== 'admin') {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+    
+    console.log(`[updateBid] Received PUT /bids/${bidId} with body =`, req.body);
+    
+    if (bid.status !== 'pending') {
+      res.status(400).json({ success: false, error: 'Cannot edit a bid that is already accepted or rejected' });
+      return;
+    }
+    
+    console.log(`[updateBid] Updating DB. New amount =`, amount, `Old amount =`, bid.amount, `Array =`, [amount ?? bid.amount, notes ?? bid.notes, estimatedArrival ?? bid.estimated_arrival, bidId]);
+    
+    runQuery(`
+      UPDATE bids SET amount = ?, notes = ?, estimated_arrival = ?
+      WHERE id = ?
+    `, [amount ?? bid.amount, notes ?? bid.notes, estimatedArrival ?? bid.estimated_arrival, bidId]);
+    
+    saveDatabase();
+    
+    const updatedBid = getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
+    
+    res.json({ success: true, data: formatBid(updatedBid) });
+  } catch (error) {
+    console.error('Update bid error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
 function formatBid(bid: any) {
   return {
     id: bid.id,
@@ -222,4 +264,4 @@ function formatMyBid(bid: any) {
   };
 }
 
-export default { createBid, getBids, getMyBids, acceptBid, rejectBid };
+export default { createBid, getBids, getMyBids, updateBid, acceptBid, rejectBid };
