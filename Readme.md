@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://bee-buzz-six.vercel.app">
+  <a href="https://bee-buzz-nfk3.vercel.app">
     <img src="https://img.shields.io/badge/🌐 Live Demo-Vercel-000000?style=for-the-badge&logo=vercel" alt="Live Demo">
   </a>
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License">
@@ -22,7 +22,7 @@
 
 | Service     | URL                                                                 |
 |-------------|---------------------------------------------------------------------|
-| **Frontend** | [https://bee-buzz-six.vercel.app](https://bee-buzz-six.vercel.app) |
+| **Frontend** | [https://bee-buzz-nfk3.vercel.app](https://bee-buzz-nfk3.vercel.app) |
 | **Backend API** | Hosted on [Render](https://render.com) (auto-deployed from `main`) |
 | **Database** | Hosted on [Neon](https://neon.tech) (PostgreSQL)                   |
 
