@@ -7,8 +7,11 @@ import { mockAuthApi, mockLoadApi, mockPaymentApi } from './mockApi.tsx';
 const USE_MOCK_API = false;
 
 // Real API instance
+const baseEnv = import.meta.env.VITE_API_URL || '';
+const baseURL = baseEnv.endsWith('/api') ? baseEnv : `${baseEnv}/api`;
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL,
   headers: { 'Content-Type': 'application/json' }
 });
 
