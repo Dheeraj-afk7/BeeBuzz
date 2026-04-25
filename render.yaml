@@ -12,6 +12,23 @@ services:
       - key: PORT
         value: 10000
 
+  - type: web
+    name: beebuzz-frontend
+    env: static
+    buildCommand: cd BeeBuzz/client && npm install && npm run build
+    staticPublishPath: BeeBuzz/client/dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: beebuzz-backend
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_WS_URL
+        fromService:
+          type: web
+          name: beebuzz-backend
+          envVarKey: RENDER_EXTERNAL_URL
+
 databases:
   - name: beebuzz-db
     databaseName: beebuzz

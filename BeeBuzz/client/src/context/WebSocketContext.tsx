@@ -17,7 +17,11 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
     const token = localStorage.getItem('token');
     if (!token) return;
 
-    const ws = new WebSocket(`ws://localhost:3001/ws?token=${token}`);
+    const wsUrl = import.meta.env.VITE_WS_URL 
+      ? `${import.meta.env.VITE_WS_URL}?token=${token}`
+      : `ws://localhost:3001/ws?token=${token}`;
+      
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
