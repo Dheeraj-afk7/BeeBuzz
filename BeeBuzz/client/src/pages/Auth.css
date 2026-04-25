@@ -1,50 +1,181 @@
-.auth-page { 
-  min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; 
-  position: relative; overflow: hidden; background-color: var(--background);
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--background);
 }
 
-.auth-background { position: absolute; inset: 0; overflow: hidden; z-index: 0; }
+.auth-background {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+}
 
 /* Dynamic Plasma Blobs */
-.bg-shape { 
-  position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.3; 
+.bg-shape {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.4;
   animation: float 20s infinite ease-in-out alternate;
 }
-@keyframes float { 0% { transform: translate(0, 0) scale(1); } 100% { transform: translate(50px, -50px) scale(1.1); } }
 
-.shape-1 { width: 600px; height: 600px; background: var(--primary-dark); top: -20%; right: -10%; animation-duration: 25s; opacity: 0.2; }
-.shape-2 { width: 500px; height: 500px; background: #9333ea; bottom: -20%; left: -10%; animation-duration: 30s; animation-direction: alternate-reverse; opacity: 0.2; }
-.shape-3 { width: 400px; height: 400px; background: var(--primary); top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.15; }
+@keyframes float {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+
+  100% {
+    transform: translate(50px, -50px) scale(1.1);
+  }
+}
+
+.shape-1 {
+  width: 600px;
+  height: 600px;
+  background: var(--primary-dark);
+  top: -20%;
+  right: -10%;
+  animation-duration: 25s;
+}
+
+.shape-2 {
+  width: 500px;
+  height: 500px;
+  background: #9333ea;
+  bottom: -20%;
+  left: -10%;
+  animation-duration: 30s;
+  animation-direction: alternate-reverse;
+}
+
+.shape-3 {
+  width: 400px;
+  height: 400px;
+  background: var(--primary);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.2;
+}
 
 /* Frosted Glass Terminal */
-.auth-container { 
-  width: 100%; max-width: 500px; 
-  background: var(--card-bg); 
-  backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid var(--border); border-radius: 24px; padding: 48px 40px; 
-  position: relative; z-index: 10; box-shadow: var(--shadow); 
+.auth-container {
+  width: 100%;
+  max-width: 500px;
+  background: rgba(20, 20, 24, 0.65);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  padding: 48px 40px;
+  position: relative;
+  z-index: 10;
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
-.auth-header { text-align: center; margin-bottom: 40px; }
-.auth-logo { 
-  font-size: 3.5rem; margin-bottom: 16px; display: inline-block;
-  filter: drop-shadow(0 0 20px var(--primary-glow));
+.auth-header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.auth-logo {
+  font-size: 3.5rem;
+  margin-bottom: 16px;
+  display: inline-block;
+  filter: drop-shadow(0 0 20px rgba(250, 204, 21, 0.4));
   animation: hoverFloat 3s ease-in-out infinite;
 }
-@keyframes hoverFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 
-.auth-header h1 { font-family: 'Outfit', sans-serif; font-size: 2rem; font-weight: 800; margin-bottom: 8px; color: var(--text-primary); }
-.auth-header p { color: var(--text-secondary); font-size: 0.95rem; font-weight: 500; }
+@keyframes hoverFloat {
 
-.auth-form { display: flex; flex-direction: column; gap: 20px; }
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
 
-.auth-error { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--danger); font-weight: 600; padding: 14px 16px; border-radius: var(--radius-sm); font-size: 0.9rem; backdrop-filter: blur(4px); }
+  50% {
+    transform: translateY(-10px);
+  }
+}
 
-.auth-submit { width: 100%; padding: 16px; font-size: 1.05rem; margin-top: 12px; border-radius: 12px; }
+.auth-header h1 {
+  font-size: 2rem;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, #fff, #a1a1aa);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
 
-.auth-footer { text-align: center; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--glass-border); color: var(--text-secondary); font-size: 0.95rem; font-weight: 500; }
-.auth-footer a { color: var(--primary-dark); font-weight: 700; transition: var(--transition); }
-.auth-footer a:hover { color: var(--primary); text-shadow: 0 0 10px var(--primary-glow); }
+.auth-header p {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
 
-@media (max-width: 480px) { .auth-container { padding: 32px 24px; border-radius: 16px; } .form-row { grid-template-columns: 1fr; gap: 20px; } }
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.auth-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  backdrop-filter: blur(4px);
+}
+
+.auth-submit {
+  width: 100%;
+  padding: 16px;
+  font-size: 1.05rem;
+  margin-top: 12px;
+  border-radius: 12px;
+}
+
+.auth-footer {
+  text-align: center;
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.auth-footer a {
+  color: var(--primary);
+  font-weight: 600;
+  transition: var(--transition);
+}
+
+.auth-footer a:hover {
+  color: #fff;
+  text-shadow: 0 0 10px var(--primary-glow);
+}
+
+@media (max-width: 480px) {
+  .auth-container {
+    padding: 32px 24px;
+    border-radius: 16px;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
