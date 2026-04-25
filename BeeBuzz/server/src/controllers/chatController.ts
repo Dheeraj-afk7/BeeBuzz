@@ -14,21 +14,21 @@ export const sendMessage = async (req: AuthRequest, res: Response): Promise<void
     
     const messageId = uuidv4();
     
-    runQuery(`
+    await runQuery(`
       INSERT INTO chat_messages (id, load_id, sender_id, receiver_id, message)
       VALUES (?, ?, ?, ?, ?)
     `, [messageId, loadId, req.user?.userId, receiverId, message]);
     
     // Notify receiver
-    const sender = getOne('SELECT name FROM users WHERE id = ?', [req.user?.userId]);
-    runQuery(`
+    const sender = await getOne('SELECT name FROM users WHERE id = ?', [req.user?.userId]);
+    await runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [uuidv4(), receiverId, 'New Message', `${sender.name}: ${message.substring(0, 50)}...`, 'new_message', loadId]);
     
-    saveDatabase();
+    await saveDatabase();
     
-    const newMessage = getOne('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
+    const newMessage = await getOne('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
     
     res.status(201).json({ success: true, data: formatMessage(newMessage) });
   } catch (error) {
@@ -41,7 +41,7 @@ export const getMessages = async (req: AuthRequest, res: Response): Promise<void
   try {
     const { loadId } = req.params;
     
-    const messages = getAll(`
+    const messages = await getAll(`
       SELECT m.*, u.name as sender_name, u.profile_photo as sender_photo
       FROM chat_messages m
       LEFT JOIN users u ON m.sender_id = u.id

@@ -12,7 +12,7 @@ export const createBid = async (req: AuthRequest, res: Response): Promise<void> 
       return;
     }
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [loadId]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [loadId]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -25,7 +25,7 @@ export const createBid = async (req: AuthRequest, res: Response): Promise<void> 
     }
     
     // Check if driver already bid
-    const existingBid = getOne('SELECT * FROM bids WHERE load_id = ? AND driver_id = ?', [loadId, req.user?.userId]);
+    const existingBid = await getOne('SELECT * FROM bids WHERE load_id = ? AND driver_id = ?', [loadId, req.user?.userId]);
     if (existingBid) {
       res.status(400).json({ success: false, error: 'You have already placed a bid' });
       return;
@@ -33,24 +33,24 @@ export const createBid = async (req: AuthRequest, res: Response): Promise<void> 
     
     const bidId = uuidv4();
     
-    runQuery(`
+    await runQuery(`
       INSERT INTO bids (id, load_id, driver_id, amount, notes, estimated_arrival)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [bidId, loadId, req.user?.userId, amount, notes, estimatedArrival]);
     
     // Update bid count
-    runQuery('UPDATE loads SET bid_count = bid_count + 1 WHERE id = ?', [loadId]);
+    await runQuery('UPDATE loads SET bid_count = bid_count + 1 WHERE id = ?', [loadId]);
     
     // Notify shipper
-    const driver = getOne('SELECT name, rating FROM users WHERE id = ?', [req.user?.userId]);
-    runQuery(`
+    const driver = await getOne('SELECT name, rating FROM users WHERE id = ?', [req.user?.userId]);
+    await runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [uuidv4(), load.shipper_id, 'New Bid Received', `${driver.name} placed a bid of ₹${amount}`, 'new_bid', loadId]);
     
-    saveDatabase();
+    await saveDatabase();
     
-    const bid = getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
+    const bid = await getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
     
     res.status(201).json({ success: true, data: formatBid(bid) });
   } catch (error) {
@@ -63,7 +63,7 @@ export const getBids = async (req: AuthRequest, res: Response): Promise<void> =>
   try {
     const { loadId } = req.params;
     
-    const bids = getAll(`
+    const bids = await getAll(`
       SELECT b.*, u.name as driver_name, u.rating, u.total_jobs, u.vehicle_type, u.vehicle_number, u.profile_photo
       FROM bids b 
       LEFT JOIN users u ON b.driver_id = u.id 
@@ -80,7 +80,7 @@ export const getBids = async (req: AuthRequest, res: Response): Promise<void> =>
 
 export const getMyBids = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const bids = getAll(`
+    const bids = await getAll(`
       SELECT b.*, l.pickup_address, l.delivery_address, l.cargo_type, l.price as load_price, l.status as load_status, u.name as shipper_name
       FROM bids b 
       LEFT JOIN loads l ON b.load_id = l.id
@@ -100,14 +100,14 @@ export const acceptBid = async (req: AuthRequest, res: Response): Promise<void> 
   try {
     const { bidId } = req.params;
     
-    const bid = getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
+    const bid = await getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
     
     if (!bid) {
       res.status(404).json({ success: false, error: 'Bid not found' });
       return;
     }
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [bid.load_id]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [bid.load_id]);
     
     if (load.shipper_id !== req.user?.userId) {
       res.status(403).json({ success: false, error: 'Not authorized' });
@@ -115,13 +115,13 @@ export const acceptBid = async (req: AuthRequest, res: Response): Promise<void> 
     }
     
     // Accept this bid
-    runQuery("UPDATE bids SET status = 'accepted' WHERE id = ?", [bidId]);
+    await runQuery("UPDATE bids SET status = 'accepted' WHERE id = ?", [bidId]);
     
     // Reject all other bids for this load
-    runQuery("UPDATE bids SET status = 'rejected' WHERE load_id = ? AND id != ?", [bid.load_id, bidId]);
+    await runQuery("UPDATE bids SET status = 'rejected' WHERE load_id = ? AND id != ?", [bid.load_id, bidId]);
     
     // Update load
-    runQuery("UPDATE loads SET driver_id = ?, status = 'assigned', current_status = 'accepted' WHERE id = ?",
+    await runQuery("UPDATE loads SET driver_id = ?, status = 'assigned', current_status = 'accepted' WHERE id = ?",
       [bid.driver_id, bid.load_id]);
     
     // Create payment record (escrow)
@@ -129,21 +129,21 @@ export const acceptBid = async (req: AuthRequest, res: Response): Promise<void> 
     const platformFee = load.price * 0.05;
     const netAmount = load.price - platformFee;
     
-    runQuery(`
+    await runQuery(`
       INSERT INTO payments (id, load_id, shipper_id, driver_id, amount, platform_fee, net_amount, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'held')
     `, [paymentId, load.id, load.shipper_id, bid.driver_id, load.price, platformFee, netAmount]);
     
     // Notify driver
-    const driver = getOne('SELECT name FROM users WHERE id = ?', [bid.driver_id]);
-    runQuery(`
+    const driver = await getOne('SELECT name FROM users WHERE id = ?', [bid.driver_id]);
+    await runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [uuidv4(), bid.driver_id, 'Bid Accepted', 'Your bid has been accepted!', 'bid_accepted', bid.load_id]);
     
-    saveDatabase();
+    await saveDatabase();
     
-    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [bid.load_id]);
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [bid.load_id]);
     
     res.json({ success: true, data: { load: updatedLoad, bid: bid } });
   } catch (error) {
@@ -156,29 +156,29 @@ export const rejectBid = async (req: AuthRequest, res: Response): Promise<void> 
   try {
     const { bidId } = req.params;
     
-    const bid = getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
+    const bid = await getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
     
     if (!bid) {
       res.status(404).json({ success: false, error: 'Bid not found' });
       return;
     }
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [bid.load_id]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [bid.load_id]);
     
     if (load.shipper_id !== req.user?.userId) {
       res.status(403).json({ success: false, error: 'Not authorized' });
       return;
     }
     
-    runQuery("UPDATE bids SET status = 'rejected' WHERE id = ?", [bidId]);
+    await runQuery("UPDATE bids SET status = 'rejected' WHERE id = ?", [bidId]);
     
     // Notify driver
-    runQuery(`
+    await runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [uuidv4(), bid.driver_id, 'Bid Rejected', 'Your bid has been rejected', 'bid_rejected', bid.load_id]);
     
-    saveDatabase();
+    await saveDatabase();
     
     res.json({ success: true, message: 'Bid rejected' });
   } catch (error) {
@@ -192,7 +192,7 @@ export const updateBid = async (req: AuthRequest, res: Response): Promise<void> 
     const { bidId } = req.params;
     const { amount, notes, estimatedArrival } = req.body;
     
-    const bid = getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
+    const bid = await getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
     
     if (!bid) {
       res.status(404).json({ success: false, error: 'Bid not found' });
@@ -213,14 +213,14 @@ export const updateBid = async (req: AuthRequest, res: Response): Promise<void> 
     
     console.log(`[updateBid] Updating DB. New amount =`, amount, `Old amount =`, bid.amount, `Array =`, [amount ?? bid.amount, notes ?? bid.notes, estimatedArrival ?? bid.estimated_arrival, bidId]);
     
-    runQuery(`
+    await runQuery(`
       UPDATE bids SET amount = ?, notes = ?, estimated_arrival = ?
       WHERE id = ?
     `, [amount ?? bid.amount, notes ?? bid.notes, estimatedArrival ?? bid.estimated_arrival, bidId]);
     
-    saveDatabase();
+    await saveDatabase();
     
-    const updatedBid = getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
+    const updatedBid = await getOne('SELECT * FROM bids WHERE id = ?', [bidId]);
     
     res.json({ success: true, data: formatBid(updatedBid) });
   } catch (error) {

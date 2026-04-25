@@ -1,7 +1,4 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.initDatabase = initDatabase;
 exports.getDb = getDb;
@@ -9,35 +6,33 @@ exports.saveDatabase = saveDatabase;
 exports.runQuery = runQuery;
 exports.getOne = getOne;
 exports.getAll = getAll;
-const sql_js_1 = __importDefault(require("sql.js"));
-const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
-const dbPath = path_1.default.join(process.cwd(), 'data', 'beebuzz.db');
-const dataDir = path_1.default.dirname(dbPath);
-if (!fs_1.default.existsSync(dataDir)) {
-    fs_1.default.mkdirSync(dataDir, { recursive: true });
-}
-// Debug: show database path
-console.log('Database path:', dbPath);
-let db = null;
-// Use "export async function" instead of "export default"
+const pg_1 = require("pg");
+require("dotenv/config");
+// If no DATABASE_URL, fallback to a standard local postgres url
+const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/beebuzz';
+// Render typical production URL will need SSL
+const pool = new pg_1.Pool({
+    connectionString,
+    ssl: connectionString.includes('render.com') || process.env.NODE_ENV === 'production'
+        ? { rejectUnauthorized: false }
+        : false
+});
 async function initDatabase() {
-    const SQL = await (0, sql_js_1.default)();
-    if (fs_1.default.existsSync(dbPath)) {
-        const fileBuffer = fs_1.default.readFileSync(dbPath);
-        db = new SQL.Database(fileBuffer);
+    try {
+        const client = await pool.connect();
+        client.release();
+        console.log('✅ Connected to PostgreSQL database.');
+        await initializeTables();
+        return pool;
     }
-    else {
-        db = new SQL.Database();
+    catch (error) {
+        console.error('Database connection error:', error);
+        throw error;
     }
-    initializeTables();
-    return db;
 }
-function initializeTables() {
-    if (!db)
-        return;
-    db.run(`
-    CREATE TABLE IF NOT EXISTS users (
+async function initializeTables() {
+    const queries = [
+        `CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
@@ -59,11 +54,9 @@ function initializeTables() {
       rating REAL DEFAULT 5.0,
       total_jobs INTEGER DEFAULT 0,
       is_verified INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS loads (
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+        `CREATE TABLE IF NOT EXISTS loads (
       id TEXT PRIMARY KEY,
       shipper_id TEXT NOT NULL,
       driver_id TEXT,
@@ -84,13 +77,11 @@ function initializeTables() {
       status TEXT DEFAULT 'open',
       current_status TEXT DEFAULT 'pending',
       bid_count INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (shipper_id) REFERENCES users(id),
       FOREIGN KEY (driver_id) REFERENCES users(id)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS bids (
+    )`,
+        `CREATE TABLE IF NOT EXISTS bids (
       id TEXT PRIMARY KEY,
       load_id TEXT NOT NULL,
       driver_id TEXT NOT NULL,
@@ -98,14 +89,12 @@ function initializeTables() {
       notes TEXT,
       status TEXT DEFAULT 'pending',
       estimated_arrival TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (load_id) REFERENCES loads(id),
       FOREIGN KEY (driver_id) REFERENCES users(id),
       UNIQUE(load_id, driver_id)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS proof_of_delivery (
+    )`,
+        `CREATE TABLE IF NOT EXISTS proof_of_delivery (
       id TEXT PRIMARY KEY,
       load_id TEXT NOT NULL,
       photos TEXT,
@@ -114,24 +103,20 @@ function initializeTables() {
       delivery_notes TEXT,
       latitude REAL,
       longitude REAL,
-      timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (load_id) REFERENCES loads(id)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS location_updates (
+    )`,
+        `CREATE TABLE IF NOT EXISTS location_updates (
       id TEXT PRIMARY KEY,
       load_id TEXT NOT NULL,
       driver_id TEXT NOT NULL,
       latitude REAL NOT NULL,
       longitude REAL NOT NULL,
-      timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (load_id) REFERENCES loads(id),
       FOREIGN KEY (driver_id) REFERENCES users(id)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS notifications (
+    )`,
+        `CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -139,12 +124,10 @@ function initializeTables() {
       type TEXT NOT NULL,
       reference_id TEXT,
       read INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS payments (
+    )`,
+        `CREATE TABLE IF NOT EXISTS payments (
       id TEXT PRIMARY KEY,
       load_id TEXT NOT NULL,
       shipper_id TEXT NOT NULL,
@@ -153,111 +136,84 @@ function initializeTables() {
       platform_fee REAL DEFAULT 0,
       net_amount REAL NOT NULL,
       status TEXT DEFAULT 'held',
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      released_at TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      released_at TIMESTAMP,
       FOREIGN KEY (load_id) REFERENCES loads(id),
       FOREIGN KEY (shipper_id) REFERENCES users(id),
       FOREIGN KEY (driver_id) REFERENCES users(id)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS chat_messages (
+    )`,
+        `CREATE TABLE IF NOT EXISTS chat_messages (
       id TEXT PRIMARY KEY,
       load_id TEXT NOT NULL,
       sender_id TEXT NOT NULL,
       receiver_id TEXT NOT NULL,
       message TEXT NOT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (load_id) REFERENCES loads(id),
       FOREIGN KEY (sender_id) REFERENCES users(id),
       FOREIGN KEY (receiver_id) REFERENCES users(id)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS ratings (
+    )`,
+        `CREATE TABLE IF NOT EXISTS ratings (
       id TEXT PRIMARY KEY,
       load_id TEXT NOT NULL,
       from_user_id TEXT NOT NULL,
       to_user_id TEXT NOT NULL,
       rating INTEGER NOT NULL,
       review TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (load_id) REFERENCES loads(id),
       FOREIGN KEY (from_user_id) REFERENCES users(id),
       FOREIGN KEY (to_user_id) REFERENCES users(id)
-    )
-  `);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_loads_shipper ON loads(shipper_id)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_loads_driver ON loads(driver_id)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_loads_status ON loads(status)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_bids_load ON bids(load_id)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_bids_driver ON bids(driver_id)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_location_load ON location_updates(load_id)`);
-    saveDatabase();
+    )`
+    ];
+    for (const q of queries) {
+        await pool.query(q);
+    }
+    const indexes = [
+        `CREATE INDEX IF NOT EXISTS idx_loads_shipper ON loads(shipper_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_loads_driver ON loads(driver_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_loads_status ON loads(status)`,
+        `CREATE INDEX IF NOT EXISTS idx_bids_load ON bids(load_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_bids_driver ON bids(driver_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_location_load ON location_updates(load_id)`
+    ];
+    for (const idx of indexes) {
+        await pool.query(idx);
+    }
 }
 function getDb() {
-    if (!db)
-        throw new Error('Database not initialized. Call initDatabase() first.');
-    return db;
+    return pool;
 }
 function saveDatabase() {
-    if (!db) {
-        console.log('DB is null, cannot save');
-        return;
-    }
-    try {
-        const data = db.export();
-        const buffer = Buffer.from(data);
-        fs_1.default.writeFileSync(dbPath, buffer);
-        console.log('✅ Database saved to:', dbPath);
-    }
-    catch (error) {
-        console.error('Error saving database:', error);
-    }
+    // No-op for PostgreSQL
 }
-// Helper functions - with undefined to null conversion
-function runQuery(sql, params = []) {
-    const database = getDb();
-    const stmt = database.prepare(sql);
-    // Convert undefined to null for all params
-    const safeParams = params.map((p) => p === undefined ? null : p);
+// Convert ? to $1, $2, etc for pg driver
+function convertSqlToPg(sql) {
+    let paramIndex = 1;
+    return sql.replace(/\?/g, () => `$${paramIndex++}`);
+}
+async function runQuery(sql, params = []) {
+    const pgSql = convertSqlToPg(sql);
+    const safeParams = params.map(p => p === undefined ? null : p);
     try {
-        stmt.bind(safeParams);
-        stmt.step();
+        await pool.query(pgSql, safeParams);
     }
     catch (err) {
         console.error('Query error:', err);
-        console.error('SQL:', sql);
+        console.error('SQL:', pgSql);
+        throw err;
     }
-    finally {
-        stmt.free();
-    }
-    saveDatabase();
 }
-function getOne(sql, params = []) {
-    const database = getDb();
-    const stmt = database.prepare(sql);
-    // Convert undefined to null
-    const safeParams = params.map((p) => p === undefined ? null : p);
-    stmt.bind(safeParams);
-    let result = null;
-    if (stmt.step()) {
-        result = stmt.getAsObject();
-    }
-    stmt.free();
-    return result;
+async function getOne(sql, params = []) {
+    const pgSql = convertSqlToPg(sql);
+    const safeParams = params.map(p => p === undefined ? null : p);
+    const result = await pool.query(pgSql, safeParams);
+    return result.rows[0] || null;
 }
-function getAll(sql, params = []) {
-    const database = getDb();
-    const stmt = database.prepare(sql);
-    // Convert undefined to null
-    const safeParams = params.map((p) => p === undefined ? null : p);
-    stmt.bind(safeParams);
-    const results = [];
-    while (stmt.step()) {
-        results.push(stmt.getAsObject());
-    }
-    stmt.free();
-    return results;
+async function getAll(sql, params = []) {
+    const pgSql = convertSqlToPg(sql);
+    const safeParams = params.map(p => p === undefined ? null : p);
+    const result = await pool.query(pgSql, safeParams);
+    return result.rows;
 }

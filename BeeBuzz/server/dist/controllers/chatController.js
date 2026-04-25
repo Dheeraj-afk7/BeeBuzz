@@ -11,18 +11,18 @@ const sendMessage = async (req, res) => {
             return;
         }
         const messageId = (0, uuid_1.v4)();
-        (0, database_js_1.runQuery)(`
+        await (0, database_js_1.runQuery)(`
       INSERT INTO chat_messages (id, load_id, sender_id, receiver_id, message)
       VALUES (?, ?, ?, ?, ?)
     `, [messageId, loadId, req.user?.userId, receiverId, message]);
         // Notify receiver
-        const sender = (0, database_js_1.getOne)('SELECT name FROM users WHERE id = ?', [req.user?.userId]);
-        (0, database_js_1.runQuery)(`
+        const sender = await (0, database_js_1.getOne)('SELECT name FROM users WHERE id = ?', [req.user?.userId]);
+        await (0, database_js_1.runQuery)(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [(0, uuid_1.v4)(), receiverId, 'New Message', `${sender.name}: ${message.substring(0, 50)}...`, 'new_message', loadId]);
-        (0, database_js_1.saveDatabase)();
-        const newMessage = (0, database_js_1.getOne)('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
+        await (0, database_js_1.saveDatabase)();
+        const newMessage = await (0, database_js_1.getOne)('SELECT * FROM chat_messages WHERE id = ?', [messageId]);
         res.status(201).json({ success: true, data: formatMessage(newMessage) });
     }
     catch (error) {
@@ -34,7 +34,7 @@ exports.sendMessage = sendMessage;
 const getMessages = async (req, res) => {
     try {
         const { loadId } = req.params;
-        const messages = (0, database_js_1.getAll)(`
+        const messages = await (0, database_js_1.getAll)(`
       SELECT m.*, u.name as sender_name, u.profile_photo as sender_photo
       FROM chat_messages m
       LEFT JOIN users u ON m.sender_id = u.id

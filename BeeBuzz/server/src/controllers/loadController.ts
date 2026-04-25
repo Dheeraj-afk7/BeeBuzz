@@ -25,20 +25,20 @@ export const createLoad = async (req: AuthRequest, res: Response): Promise<void>
     
     const loadId = uuidv4();
     
-    runQuery(`
+    await runQuery(`
       INSERT INTO loads (id, shipper_id, pickup_address, pickup_lat, pickup_lng, delivery_address, delivery_lat, delivery_lng, cargo_type, cargo_weight, cargo_dimensions, truck_type, special_requirements, pickup_date, delivery_date, price, status, current_status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'pending')
     `, [loadId, req.user?.userId, pickupAddress, _pickupLat, _pickupLng, deliveryAddress, _deliveryLat, _deliveryLng, cargoType, _cargoWeight, _cargoDimensions, truckType, _specialRequirements, pickupDate, deliveryDate, _price]);
     
     // Notify drivers about new load
-    const drivers = getAll("SELECT id FROM users WHERE role = 'driver' AND document_status = 'verified'");
+    const drivers = await getAll("SELECT id FROM users WHERE role = 'driver' AND document_status = 'verified'");
     
-    drivers.forEach((driver: any) => {
-      runQuery('INSERT INTO notifications (id, user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?, ?)',
+    for (const driver of drivers) {
+      await runQuery('INSERT INTO notifications (id, user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?, ?)',
         [uuidv4(), driver.id, 'New Load Available', `New ${cargoType} load from ${pickupAddress.split(',')[0]} to ${deliveryAddress.split(',')[0]}`, 'new_load', loadId]);
-    });
+    }
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [loadId]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [loadId]);
     
     res.status(201).json({ success: true, data: formatLoad(load) });
   } catch (error) {
@@ -62,7 +62,7 @@ export const getLoads = async (req: AuthRequest, res: Response): Promise<void> =
       }
       
       query += ' ORDER BY l.created_at DESC';
-      loads = getAll(query, params);
+      loads = await getAll(query, params);
     } else if (req.user?.role === 'driver') {
       let query = 'SELECT l.*, u.name as shipper_name, u.phone as shipper_phone FROM loads l LEFT JOIN users u ON l.shipper_id = u.id WHERE 1=1';
       const params: any[] = [];
@@ -81,9 +81,9 @@ export const getLoads = async (req: AuthRequest, res: Response): Promise<void> =
       }
       
       query += ' ORDER BY l.created_at DESC';
-      loads = getAll(query, params);
+      loads = await getAll(query, params);
     } else {
-      loads = getAll('SELECT * FROM loads ORDER BY created_at DESC');
+      loads = await getAll('SELECT * FROM loads ORDER BY created_at DESC');
     }
     
     res.json({ success: true, data: loads.map(formatLoad) });
@@ -97,7 +97,7 @@ export const getLoad = async (req: AuthRequest, res: Response): Promise<void> =>
   try {
     const { id } = req.params;
     
-    const load = getOne(`
+    const load = await getOne(`
       SELECT l.*, u.name as shipper_name, u.phone as shipper_phone, u.company_name as shipper_company,
              d.name as driver_name, d.phone as driver_phone, d.vehicle_type as driver_vehicle, d.vehicle_number as driver_vehicle_number
       FROM loads l 
@@ -112,7 +112,7 @@ export const getLoad = async (req: AuthRequest, res: Response): Promise<void> =>
     }
     
     // Get bids for this load
-    const bids = getAll(`
+    const bids = await getAll(`
       SELECT b.*, u.name as driver_name, u.rating, u.total_jobs, u.vehicle_type, u.vehicle_number
       FROM bids b 
       LEFT JOIN users u ON b.driver_id = u.id 
@@ -123,11 +123,11 @@ export const getLoad = async (req: AuthRequest, res: Response): Promise<void> =>
     // Get proof of delivery if delivered
     let pod = null;
     if (load.status === 'delivered') {
-      pod = getOne('SELECT * FROM proof_of_delivery WHERE load_id = ?', [id]);
+      pod = await getOne('SELECT * FROM proof_of_delivery WHERE load_id = ?', [id]);
     }
     
     // Get location history
-    const locations = getAll('SELECT * FROM location_updates WHERE load_id = ? ORDER BY timestamp DESC LIMIT 100', [id]);
+    const locations = await getAll('SELECT * FROM location_updates WHERE load_id = ? ORDER BY timestamp DESC LIMIT 100', [id]);
     
     res.json({
       success: true,
@@ -172,7 +172,7 @@ export const acceptLoad = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const { id } = req.params;
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -185,14 +185,14 @@ export const acceptLoad = async (req: AuthRequest, res: Response): Promise<void>
     }
     
     // Check if driver is verified
-    const driver = getOne('SELECT * FROM users WHERE id = ?', [req.user?.userId]);
+    const driver = await getOne('SELECT * FROM users WHERE id = ?', [req.user?.userId]);
     if (driver.document_status !== 'verified') {
       res.status(400).json({ success: false, error: 'Your documents are not verified yet' });
       return;
     }
     
     // Update load
-    runQuery('UPDATE loads SET driver_id = ?, status = ?, current_status = ? WHERE id = ?',
+    await runQuery('UPDATE loads SET driver_id = ?, status = ?, current_status = ? WHERE id = ?',
       [req.user?.userId, 'assigned', 'accepted', id]);
     
     // Create payment record (escrow)
@@ -200,24 +200,24 @@ export const acceptLoad = async (req: AuthRequest, res: Response): Promise<void>
     const platformFee = load.price * 0.05;
     const netAmount = load.price - platformFee;
     
-    runQuery(`
+    await runQuery(`
       INSERT INTO payments (id, load_id, shipper_id, driver_id, amount, platform_fee, net_amount, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'held')
     `, [paymentId, id, load.shipper_id, req.user?.userId, load.price, platformFee, netAmount]);
     
     // Accept the driver's bid
-    runQuery(`UPDATE bids SET status = 'accepted' WHERE load_id = ? AND driver_id = ?`, [id, req.user?.userId]);
+    await runQuery(`UPDATE bids SET status = 'accepted' WHERE load_id = ? AND driver_id = ?`, [id, req.user?.userId]);
     
     // Reject all other bids
-    runQuery(`UPDATE bids SET status = 'rejected' WHERE load_id = ? AND driver_id != ?`, [id, req.user?.userId]);
+    await runQuery(`UPDATE bids SET status = 'rejected' WHERE load_id = ? AND driver_id != ?`, [id, req.user?.userId]);
     
     // Notify shipper
-    runQuery(`
+    await runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [uuidv4(), load.shipper_id, 'Bid Accepted', `Your load has been accepted by ${driver.name}`, 'load_accepted', id]);
     
-    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     // Broadcast update
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
@@ -241,7 +241,7 @@ export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise
       return;
     }
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -257,12 +257,12 @@ export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise
     let dbStatus = 'in_transit';
     if (status === 'delivered') dbStatus = 'delivered';
     
-    runQuery('UPDATE loads SET current_status = ?, status = ? WHERE id = ?', [status, dbStatus, id]);
+    await runQuery('UPDATE loads SET current_status = ?, status = ? WHERE id = ?', [status, dbStatus, id]);
     
     // If delivered, process payment release
     if (status === 'delivered') {
-      runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
-      runQuery('UPDATE users SET total_jobs = total_jobs + 1 WHERE id = ?', [req.user?.userId]);
+      await runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
+      await runQuery('UPDATE users SET total_jobs = total_jobs + 1 WHERE id = ?', [req.user?.userId]);
     }
     
     // Notify shipper
@@ -275,13 +275,13 @@ export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise
     };
     
     if (statusMessages[status]) {
-      runQuery(`
+      await runQuery(`
         INSERT INTO notifications (id, user_id, title, message, type, reference_id)
         VALUES (?, ?, ?, ?, ?, ?)
       `, [uuidv4(), load.shipper_id, 'Status Update', statusMessages[status], 'status_update', id]);
     }
     
-    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
     
     res.json({ success: true, data: formatLoad(updatedLoad) });
@@ -296,7 +296,7 @@ export const updateLocation = async (req: AuthRequest, res: Response): Promise<v
     const { id } = req.params;
     const { latitude, longitude } = req.body;
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -309,7 +309,7 @@ export const updateLocation = async (req: AuthRequest, res: Response): Promise<v
     }
     
     const locId = uuidv4();
-    runQuery('INSERT INTO location_updates (id, load_id, driver_id, latitude, longitude) VALUES (?, ?, ?, ?, ?)',
+    await runQuery('INSERT INTO location_updates (id, load_id, driver_id, latitude, longitude) VALUES (?, ?, ?, ?, ?)',
       [locId, id, req.user?.userId, latitude ?? 0, longitude ?? 0]);
     
     broadcastLocationUpdate(id, latitude ?? 0, longitude ?? 0);
@@ -325,7 +325,7 @@ export const cancelLoad = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const { id } = req.params;
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -342,9 +342,9 @@ export const cancelLoad = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
     
-    runQuery('UPDATE loads SET status = ? WHERE id = ?', ['cancelled', id]);
+    await runQuery('UPDATE loads SET status = ? WHERE id = ?', ['cancelled', id]);
     
-    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
     
     res.json({ success: true, data: formatLoad(updatedLoad) });
@@ -359,7 +359,7 @@ export const uploadProofOfDelivery = async (req: AuthRequest, res: Response): Pr
     const { id } = req.params;
     const { photos, signature, recipientName, deliveryNotes, latitude, longitude } = req.body;
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -373,20 +373,20 @@ export const uploadProofOfDelivery = async (req: AuthRequest, res: Response): Pr
     
     const podId = uuidv4();
     
-    runQuery(`
+    await runQuery(`
       INSERT INTO proof_of_delivery (id, load_id, photos, signature, recipient_name, delivery_notes, latitude, longitude)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [podId, id, JSON.stringify(photos || []), signature, recipientName, deliveryNotes, latitude ?? 0, longitude ?? 0]);
     
-    runQuery("UPDATE loads SET status = 'delivered', current_status = 'delivered' WHERE id = ?", [id]);
-    runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
+    await runQuery("UPDATE loads SET status = 'delivered', current_status = 'delivered' WHERE id = ?", [id]);
+    await runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
     
-    runQuery(`
+    await runQuery(`
       INSERT INTO notifications (id, user_id, title, message, type, reference_id)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [uuidv4(), load.shipper_id, 'Proof of Delivery', 'Driver has uploaded proof of delivery. Please confirm.', 'pod_uploaded', id]);
     
-    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     res.json({ success: true, data: formatLoad(updatedLoad) });
   } catch (error) {
@@ -400,7 +400,7 @@ export const updateLoad = async (req: AuthRequest, res: Response): Promise<void>
     const { id } = req.params;
     const { pickupAddress, pickupLat, pickupLng, deliveryAddress, deliveryLat, deliveryLng, cargoType, cargoWeight, truckType, specialRequirements, pickupDate, deliveryDate, price } = req.body;
     
-    const load = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     
     if (!load) {
       res.status(404).json({ success: false, error: 'Load not found' });
@@ -417,7 +417,7 @@ export const updateLoad = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    runQuery(`
+    await runQuery(`
       UPDATE loads SET 
         pickup_address = ?, pickup_lat = ?, pickup_lng = ?, 
         delivery_address = ?, delivery_lat = ?, delivery_lng = ?, 
@@ -432,8 +432,8 @@ export const updateLoad = async (req: AuthRequest, res: Response): Promise<void>
       id
     ]);
     
-    saveDatabase();
-    const updatedLoad = getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    await saveDatabase();
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
     broadcastLoadUpdate(id, formatLoad(updatedLoad));
     
     res.json({ success: true, data: formatLoad(updatedLoad) });

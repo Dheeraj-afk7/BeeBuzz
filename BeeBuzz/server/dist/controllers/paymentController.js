@@ -4,7 +4,7 @@ exports.getPayments = exports.getEarnings = void 0;
 const database_js_1 = require("../services/database.js");
 const getEarnings = async (req, res) => {
     try {
-        const payments = (0, database_js_1.getAll)(`
+        const payments = await (0, database_js_1.getAll)(`
       SELECT p.*, l.pickup_address, l.delivery_address, l.cargo_type,
              u.name as shipper_name
       FROM payments p
@@ -13,10 +13,10 @@ const getEarnings = async (req, res) => {
       WHERE p.driver_id = ?
       ORDER BY p.created_at DESC
     `, [req.user?.userId]);
-        const pending = (0, database_js_1.getOne)(`
+        const pending = await (0, database_js_1.getOne)(`
       SELECT SUM(net_amount) as total FROM payments WHERE driver_id = ? AND status = 'held'
     `, [req.user?.userId]);
-        const totalEarnings = (0, database_js_1.getOne)(`
+        const totalEarnings = await (0, database_js_1.getOne)(`
       SELECT SUM(net_amount) as total FROM payments WHERE driver_id = ? AND status = 'released'
     `, [req.user?.userId]);
         res.json({
@@ -39,7 +39,7 @@ const getPayments = async (req, res) => {
         const { role } = req.query;
         let payments;
         if (role === 'shipper' || req.user?.role === 'shipper') {
-            payments = (0, database_js_1.getAll)(`
+            payments = await (0, database_js_1.getAll)(`
         SELECT p.*, l.pickup_address, l.delivery_address,
                d.name as driver_name
         FROM payments p
@@ -50,7 +50,7 @@ const getPayments = async (req, res) => {
       `, [req.user?.userId]);
         }
         else {
-            payments = (0, database_js_1.getAll)(`
+            payments = await (0, database_js_1.getAll)(`
         SELECT p.*, l.pickup_address, l.delivery_address,
                u.name as shipper_name
         FROM payments p

@@ -4,7 +4,7 @@ import { AuthRequest } from '../middleware/auth.js';
 
 export const getEarnings = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const payments = getAll(`
+    const payments = await getAll(`
       SELECT p.*, l.pickup_address, l.delivery_address, l.cargo_type,
              u.name as shipper_name
       FROM payments p
@@ -14,11 +14,11 @@ export const getEarnings = async (req: AuthRequest, res: Response): Promise<void
       ORDER BY p.created_at DESC
     `, [req.user?.userId]);
     
-    const pending = getOne(`
+    const pending = await getOne(`
       SELECT SUM(net_amount) as total FROM payments WHERE driver_id = ? AND status = 'held'
     `, [req.user?.userId]);
     
-    const totalEarnings = getOne(`
+    const totalEarnings = await getOne(`
       SELECT SUM(net_amount) as total FROM payments WHERE driver_id = ? AND status = 'released'
     `, [req.user?.userId]);
     
@@ -42,7 +42,7 @@ export const getPayments = async (req: AuthRequest, res: Response): Promise<void
     let payments: any[];
     
     if (role === 'shipper' || req.user?.role === 'shipper') {
-      payments = getAll(`
+      payments = await getAll(`
         SELECT p.*, l.pickup_address, l.delivery_address,
                d.name as driver_name
         FROM payments p
@@ -52,7 +52,7 @@ export const getPayments = async (req: AuthRequest, res: Response): Promise<void
         ORDER BY p.created_at DESC
       `, [req.user?.userId]);
     } else {
-      payments = getAll(`
+      payments = await getAll(`
         SELECT p.*, l.pickup_address, l.delivery_address,
                u.name as shipper_name
         FROM payments p

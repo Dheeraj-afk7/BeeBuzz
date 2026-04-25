@@ -16,7 +16,7 @@ export const register = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
     
-    const existingUser = getOne('SELECT id FROM users WHERE email = ?', [email]);
+    const existingUser = await getOne('SELECT id FROM users WHERE email = ?', [email]);
     if (existingUser) {
       res.status(400).json({ success: false, error: 'Email already registered' });
       return;
@@ -31,16 +31,16 @@ export const register = async (req: AuthRequest, res: Response): Promise<void> =
       documentStatus = 'pending';
     }
     
-    runQuery(`
+    await runQuery(`
       INSERT INTO users (id, email, password, name, phone, role, company_name, gstin, license_number, vehicle_type, vehicle_number, document_status, is_verified)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [userId, email, hashedPassword, name, phone, role, companyName || null, gstin || null, licenseNumber || null, vehicleType || null, vehicleNumber || null, documentStatus, isVerified]);
     
-    saveDatabase(); 
+    await saveDatabase(); 
 
     const token = jwt.sign({ userId, email, role }, JWT_SECRET, { expiresIn: '7d' });
     
-    const user = getOne('SELECT * FROM users WHERE id = ?', [userId]);
+    const user = await getOne('SELECT * FROM users WHERE id = ?', [userId]);
     
     res.status(201).json({
       success: true,
@@ -64,7 +64,7 @@ export const login = async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
     
-    const user = getOne('SELECT * FROM users WHERE email = ?', [email]);
+    const user = await getOne('SELECT * FROM users WHERE email = ?', [email]);
     if (!user) {
       res.status(401).json({ success: false, error: 'Invalid email or password' });
       return;
@@ -97,7 +97,7 @@ export const login = async (req: AuthRequest, res: Response): Promise<void> => {
 
 export const getMe = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const user = getOne('SELECT * FROM users WHERE id = ?', [req.user!.userId]);
+    const user = await getOne('SELECT * FROM users WHERE id = ?', [req.user!.userId]);
     
     if (!user) {
       res.status(404).json({ success: false, error: 'User not found' });
@@ -117,14 +117,14 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
     
     const userId = req.user!.userId;
     
-    const user = getOne('SELECT * FROM users WHERE id = ?', [userId]);
+    const user = await getOne('SELECT * FROM users WHERE id = ?', [userId]);
     
     if (!user) {
       res.status(404).json({ success: false, error: 'User not found' });
       return;
     }
     
-    runQuery(`
+    await runQuery(`
       UPDATE users SET 
         name = ?, phone = ?, company_name = ?, gstin = ?, address = ?, 
         license_number = ?, insurance_number = ?, vehicle_type = ?, vehicle_number = ?, 
@@ -136,9 +136,9 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
       rcNumber || null, profilePhoto || null, userId
     ]);
     
-    saveDatabase();
+    await saveDatabase();
 
-    const updatedUser = getOne('SELECT * FROM users WHERE id = ?', [userId]);
+    const updatedUser = await getOne('SELECT * FROM users WHERE id = ?', [userId]);
     
     res.json({ success: true, data: formatUser(updatedUser) });
   } catch (error) {
@@ -158,7 +158,7 @@ export const uploadDocument = async (req: AuthRequest, res: Response): Promise<v
 
     const userId = req.user!.userId;
     
-    const user = getOne('SELECT * FROM users WHERE id = ?', [userId]);
+    const user = await getOne('SELECT * FROM users WHERE id = ?', [userId]);
     
     if (!user) {
       res.status(404).json({ success: false, error: 'User not found' });
@@ -181,9 +181,9 @@ export const uploadDocument = async (req: AuthRequest, res: Response): Promise<v
         return;
     }
     
-    runQuery(`UPDATE users SET ${updateField}, document_status = 'pending' WHERE id = ?`, [documentPhoto, userId]);
+    await runQuery(`UPDATE users SET ${updateField}, document_status = 'pending' WHERE id = ?`, [documentPhoto, userId]);
     
-    saveDatabase();
+    await saveDatabase();
     
     res.json({ success: true, message: 'Document uploaded successfully' });
   } catch (error) {

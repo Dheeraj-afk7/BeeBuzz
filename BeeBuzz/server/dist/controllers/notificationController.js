@@ -4,7 +4,7 @@ exports.getUnreadCount = exports.markAsRead = exports.getNotifications = void 0;
 const database_js_1 = require("../services/database.js");
 const getNotifications = async (req, res) => {
     try {
-        const notifications = (0, database_js_1.getAll)('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50', [req.user?.userId]);
+        const notifications = await (0, database_js_1.getAll)('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50', [req.user?.userId]);
         res.json({
             success: true,
             data: notifications.map(n => ({
@@ -27,8 +27,8 @@ exports.getNotifications = getNotifications;
 const markAsRead = async (req, res) => {
     try {
         const { id } = req.params;
-        (0, database_js_1.runQuery)('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?', [id, req.user?.userId]);
-        (0, database_js_1.saveDatabase)();
+        await (0, database_js_1.runQuery)('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?', [id, req.user?.userId]);
+        await (0, database_js_1.saveDatabase)();
         res.json({ success: true, message: 'Notification marked as read' });
     }
     catch (error) {
@@ -39,7 +39,7 @@ const markAsRead = async (req, res) => {
 exports.markAsRead = markAsRead;
 const getUnreadCount = async (req, res) => {
     try {
-        const result = (0, database_js_1.getOne)('SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND read = 0', [req.user?.userId]);
+        const result = await (0, database_js_1.getOne)('SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND read = 0', [req.user?.userId]);
         res.json({ success: true, data: { count: result.count } });
     }
     catch (error) {

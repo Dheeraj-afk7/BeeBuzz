@@ -4,7 +4,7 @@ import { AuthRequest } from '../middleware/auth.js';
 
 export const getNotifications = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const notifications = getAll(
+    const notifications = await getAll(
       'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
       [req.user?.userId]
     );
@@ -31,9 +31,9 @@ export const markAsRead = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const { id } = req.params;
     
-    runQuery('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?', [id, req.user?.userId]);
+    await runQuery('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?', [id, req.user?.userId]);
     
-    saveDatabase();
+    await saveDatabase();
     
     res.json({ success: true, message: 'Notification marked as read' });
   } catch (error) {
@@ -44,7 +44,7 @@ export const markAsRead = async (req: AuthRequest, res: Response): Promise<void>
 
 export const getUnreadCount = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const result = getOne(
+    const result = await getOne(
       'SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND read = 0',
       [req.user?.userId]
     );
