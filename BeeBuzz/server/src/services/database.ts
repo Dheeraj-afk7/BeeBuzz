@@ -4,12 +4,14 @@ import 'dotenv/config';
 // If no DATABASE_URL, fallback to a standard local postgres url
 const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/beebuzz';
 
-// Render typical production URL will need SSL
+// External databases require SSL
+const requiresSsl = connectionString.includes('render.com') || 
+                    connectionString.includes('neon.tech') || 
+                    process.env.NODE_ENV === 'production';
+
 const pool = new Pool({
   connectionString,
-  ssl: connectionString.includes('render.com') || process.env.NODE_ENV === 'production' 
-    ? { rejectUnauthorized: false } 
-    : false
+  ssl: requiresSsl ? { rejectUnauthorized: false } : false
 });
 
 export async function initDatabase() {
