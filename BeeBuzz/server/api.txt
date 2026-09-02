@@ -1,0 +1,74 @@
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: '/api',
+  headers: { 'Content-Type': 'application/json' }
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
+export const authApi = {
+  register: (data: any) => api.post('/auth/register', data),
+  login: (data: any) => api.post('/auth/login', data),
+  getMe: () => api.get('/auth/me'),
+  updateProfile: (data: any) => api.put('/auth/profile', data)
+};
+
+export const loadApi = {
+  create: (data: any) => api.post('/loads', data),
+  getAll: (params?: any) => api.get('/loads', { params }),
+  getOne: (id: string) => api.get(`/loads/${id}`),
+  accept: (id: string) => api.post(`/loads/${id}/accept`),
+  updateStatus: (id: string, status: string, notes?: string) => 
+    api.put(`/loads/${id}/status`, { status, notes }),
+  updateLocation: (id: string, lat: number, lng: number) => 
+    api.put(`/loads/${id}/location`, { lat, lng }),
+  cancel: (id: string) => api.delete(`/loads/${id}`),
+  uploadPod: (id: string, data: any) => api.put(`/loads/${id}/pod`, data)
+};
+
+export const bidApi = {
+  create: (data: any) => api.post('/bids', data),
+  getForLoad: (loadId: string) => api.get(`/bids/load/${loadId}`),
+  getMyBids: () => api.get('/bids/my'),
+  accept: (bidId: string) => api.put(`/bids/${bidId}/accept`),
+  reject: (bidId: string) => api.put(`/bids/${bidId}/reject`)
+};
+
+export const notificationApi = {
+  getAll: () => api.get('/notifications'),
+  getUnread: () => api.get('/notifications/unread'),
+  markAsRead: (id: string) => api.put(`/notifications/${id}/read`)
+};
+
+export const chatApi = {
+  send: (data: any) => api.post('/chat', data),
+  getMessages: (loadId: string) => api.get(`/chat/${loadId}`)
+};
+
+// ✅ Updated paymentApi (replaces existing one)
+export const paymentApi = {
+  getEarnings: () => api.get('/payments/earnings'),
+  getAll: (params?: { role?: string; page?: number; limit?: number }) => 
+    api.get('/payments', { params }),
+  requestPayout: (amount: number) => api.post('/payments/payout', { amount }),
+  getPayoutHistory: () => api.get('/payments/payouts')
+};
+
+export default api;

@@ -1,0 +1,692 @@
+import { Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+import { getOne, getAll, runQuery, saveDatabase } from '../services/database.js';
+import { AuthRequest } from '../middleware/auth.js';
+import { emailService } from '../services/emailService.js';
+import { paymentGateway } from '../services/paymentGateway.js';
+import { broadcastToLoad } from '../services/websocket.js';
+import { getAiPricing } from '../services/aiPricingService.js';
+
+
+export const createLoad = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { pickupAddress, pickupLat, pickupLng, deliveryAddress, deliveryLat, deliveryLng, cargoType, cargoWeight, cargoDimensions, truckType, specialRequirements, pickupDate, deliveryDate, price } = req.body;
+
+    // Convert undefined to null
+    const _pickupLat = pickupLat ?? null;
+    const _pickupLng = pickupLng ?? null;
+    const _deliveryLat = deliveryLat ?? null;
+    const _deliveryLng = deliveryLng ?? null;
+    const _cargoWeight = cargoWeight ?? 0;
+    const _cargoDimensions = cargoDimensions ?? null;
+    const _specialRequirements = specialRequirements ?? null;
+    const _price = price ?? 0;
+
+    // Validate required fields
+    if (!pickupAddress || !deliveryAddress || !cargoType || !_cargoWeight || !truckType || !pickupDate || !deliveryDate || !_price) {
+      res.status(400).json({ success: false, error: 'All required fields must be provided' });
+      return;
+    }
+
+    const loadId = uuidv4();
+
+    await runQuery(`
+      INSERT INTO loads (id, shipper_id, pickup_address, pickup_lat, pickup_lng, delivery_address, delivery_lat, delivery_lng, cargo_type, cargo_weight, cargo_dimensions, truck_type, special_requirements, pickup_date, delivery_date, price, status, current_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'pending')
+    `, [loadId, req.user?.userId, pickupAddress, _pickupLat, _pickupLng, deliveryAddress, _deliveryLat, _deliveryLng, cargoType, _cargoWeight, _cargoDimensions, truckType, _specialRequirements, pickupDate, deliveryDate, _price]);
+
+    // Notify drivers about new load
+    const drivers = await getAll("SELECT id FROM users WHERE role = 'driver' AND document_status = 'verified'");
+
+    for (const driver of drivers) {
+      await runQuery('INSERT INTO notifications (id, user_id, title, message, type, reference_id) VALUES (?, ?, ?, ?, ?, ?)',
+        [uuidv4(), driver.id, 'New Load Available', `New ${cargoType} load from ${pickupAddress.split(',')[0]} to ${deliveryAddress.split(',')[0]}`, 'new_load', loadId]);
+    }
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [loadId]);
+
+    res.status(201).json({ success: true, data: formatLoad(load) });
+  } catch (error) {
+    console.error('Create load error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const getLoads = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { status } = req.query;
+    let loads: any[];
+
+    if (req.user?.role === 'shipper') {
+      let query = 'SELECT l.*, u.name as shipper_name, u.phone as shipper_phone, d.name as driver_name, d.phone as driver_phone, d.vehicle_type as driver_vehicle FROM loads l LEFT JOIN users u ON l.shipper_id = u.id LEFT JOIN users d ON l.driver_id = d.id WHERE l.shipper_id = ?';
+      const params: any[] = [req.user.userId];
+
+      if (status && status !== 'all') {
+        query += ' AND l.status = ?';
+        params.push(status);
+      }
+
+      query += ' ORDER BY l.created_at DESC';
+      loads = await getAll(query, params);
+    } else if (req.user?.role === 'driver') {
+      let query = 'SELECT l.*, u.name as shipper_name, u.phone as shipper_phone FROM loads l LEFT JOIN users u ON l.shipper_id = u.id WHERE 1=1';
+      const params: any[] = [];
+
+      if (status === 'open') {
+        query += ' AND l.status = ?';
+        params.push('open');
+      } else if (status === 'my') {
+        query += ' AND l.driver_id = ?';
+        params.push(req.user.userId);
+      } else if (status === 'available') {
+        query += " AND l.status = 'open'";
+      } else {
+        query += ' AND (l.status = ? OR l.driver_id = ?)';
+        params.push('open', req.user.userId);
+      }
+
+      query += ' ORDER BY l.created_at DESC';
+      loads = await getAll(query, params);
+    } else {
+      loads = await getAll('SELECT * FROM loads ORDER BY created_at DESC');
+    }
+
+    res.json({ success: true, data: loads.map(formatLoad) });
+  } catch (error) {
+    console.error('Get loads error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const getLoad = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const load = await getOne(`
+      SELECT l.*, u.name as shipper_name, u.phone as shipper_phone, u.company_name as shipper_company, u.signature as shipper_signature,
+             d.name as driver_name, d.phone as driver_phone, d.vehicle_type as driver_vehicle, d.vehicle_number as driver_vehicle_number, d.signature as driver_signature
+      FROM loads l 
+      LEFT JOIN users u ON l.shipper_id = u.id 
+      LEFT JOIN users d ON l.driver_id = d.id 
+      WHERE l.id = ?
+    `, [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    // Get bids for this load
+    const bids = await getAll(`
+      SELECT b.*, u.name as driver_name, u.rating, u.total_jobs, u.vehicle_type, u.vehicle_number,
+             u.is_verified as driver_is_verified, u.license_number as driver_license_number, u.rc_number as driver_rc_number, u.verification_report as driver_verification_report
+      FROM bids b 
+      LEFT JOIN users u ON b.driver_id = u.id 
+      WHERE b.load_id = ?
+      ORDER BY b.amount ASC
+    `, [id]);
+
+    // Get proof of delivery if pending verification or delivered
+    let pod = null;
+    if (load.status === 'delivered' || load.status === 'delivered_pending_verification' ||
+      load.current_status === 'delivered_pending_verification') {
+      pod = await getOne('SELECT * FROM proof_of_delivery WHERE load_id = ? ORDER BY timestamp DESC LIMIT 1', [id]);
+    }
+
+    // Get location history
+    const locations = await getAll('SELECT * FROM location_updates WHERE load_id = ? ORDER BY timestamp DESC LIMIT 100', [id]);
+
+    res.json({
+      success: true,
+      data: {
+        ...formatLoad(load),
+        bids: bids.map((b: any) => ({
+          id: b.id,
+          driverId: b.driver_id,
+          driverName: b.driver_name,
+          driverRating: b.rating,
+          driverTotalJobs: b.total_jobs,
+          driverVehicle: b.vehicle_type,
+          driverVehicleNumber: b.vehicle_number,
+          amount: b.amount,
+          notes: b.notes,
+          status: b.status,
+          estimatedArrival: b.estimated_arrival,
+          createdAt: b.created_at,
+          driverIsVerified: Boolean(b.driver_is_verified),
+          driverLicenseNumber: b.driver_license_number,
+          driverRcNumber: b.driver_rc_number,
+          driverVerificationReport: b.driver_verification_report
+        })),
+        proofOfDelivery: pod ? {
+          id: pod.id,
+          photos: pod.photos ? JSON.parse(pod.photos) : [],
+          signature: pod.signature,
+          recipientName: pod.recipient_name,
+          deliveryNotes: pod.delivery_notes,
+          timestamp: pod.timestamp
+        } : null,
+        locations: locations.map((l: any) => ({
+          lat: l.latitude,
+          lng: l.longitude,
+          timestamp: l.timestamp
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Get load error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const acceptLoad = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.status !== 'open') {
+      res.status(400).json({ success: false, error: 'Load is not available' });
+      return;
+    }
+
+    // Check if driver is verified
+    const driver = await getOne('SELECT * FROM users WHERE id = ?', [req.user?.userId]);
+    if (driver.document_status !== 'verified') {
+      res.status(400).json({ success: false, error: 'Your documents are not verified yet' });
+      return;
+    }
+
+    // Update load
+    await runQuery('UPDATE loads SET driver_id = ?, status = ?, current_status = ? WHERE id = ?',
+      [req.user?.userId, 'assigned', 'accepted', id]);
+
+    // Create payment record (escrow)
+    const paymentId = uuidv4();
+    const platformFee = load.price * 0.05;
+    const netAmount = load.price - platformFee;
+
+    await runQuery(`
+      INSERT INTO payments (id, load_id, shipper_id, driver_id, amount, platform_fee, net_amount, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'held')
+    `, [paymentId, id, load.shipper_id, req.user?.userId, load.price, platformFee, netAmount]);
+
+    // Accept the driver's bid
+    await runQuery(`UPDATE bids SET status = 'accepted' WHERE load_id = ? AND driver_id = ?`, [id, req.user?.userId]);
+
+    // Reject all other bids
+    await runQuery(`UPDATE bids SET status = 'rejected' WHERE load_id = ? AND driver_id != ?`, [id, req.user?.userId]);
+
+    // Notify shipper
+    await runQuery(`
+      INSERT INTO notifications (id, user_id, title, message, type, reference_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [uuidv4(), load.shipper_id, 'Bid Accepted', `Your load has been accepted by ${driver.name}`, 'load_accepted', id]);
+
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    // Broadcast update
+    broadcastLoadUpdate(id, formatLoad(updatedLoad));
+
+    res.json({ success: true, data: formatLoad(updatedLoad) });
+  } catch (error) {
+    console.error('Accept load error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const updateLoadStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { status, notes } = req.body;
+
+    const validStatuses = ['pending', 'accepted', 'arrived_pickup', 'loaded', 'en_route', 'arrived_delivery', 'delivered_pending_verification', 'delivered', 'cancelled'];
+
+    if (!validStatuses.includes(status)) {
+      res.status(400).json({ success: false, error: 'Invalid status' });
+      return;
+    }
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.driver_id !== req.user?.userId && load.shipper_id !== req.user?.userId && req.user?.role !== 'admin') {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+
+    if (req.user?.role === 'driver' && status === 'delivered') {
+      res.status(403).json({ success: false, error: 'Drivers cannot manually mark as delivered. Upload POD instead.' });
+      return;
+    }
+
+    // Update status
+    let dbStatus = 'in_transit';
+    if (status === 'pending') dbStatus = 'open';
+    else if (status === 'accepted') dbStatus = 'assigned';
+    else if (status === 'delivered_pending_verification') dbStatus = 'delivered_pending_verification';
+    else if (status === 'delivered') dbStatus = 'delivered';
+    else if (status === 'cancelled') dbStatus = 'cancelled';
+
+    await runQuery('UPDATE loads SET current_status = ?, status = ? WHERE id = ?', [status, dbStatus, id]);
+
+    // If delivered, process payment release
+    if (status === 'delivered' && load.current_status !== 'delivered') {
+      await runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
+      await runQuery('UPDATE users SET total_jobs = total_jobs + 1 WHERE id = ?', [load.driver_id]);
+    }
+
+    // Notify shipper
+    const statusMessages: Record<string, string> = {
+      'arrived_pickup': 'Driver has arrived at pickup location',
+      'loaded': 'Cargo has been loaded and driver departed',
+      'en_route': 'Shipment is on the way',
+      'arrived_delivery': 'Driver has arrived at delivery location',
+      'delivered': 'Shipment has been delivered!'
+    };
+
+    if (statusMessages[status]) {
+      await runQuery(`
+        INSERT INTO notifications (id, user_id, title, message, type, reference_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [uuidv4(), load.shipper_id, 'Status Update', statusMessages[status], 'status_update', id]);
+    }
+
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    broadcastLoadUpdate(id, formatLoad(updatedLoad));
+
+    res.json({ success: true, data: formatLoad(updatedLoad) });
+  } catch (error) {
+    console.error('Update load status error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const updateLocation = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { latitude, longitude } = req.body;
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.driver_id !== req.user?.userId) {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+
+    const locId = uuidv4();
+    await runQuery('INSERT INTO location_updates (id, load_id, driver_id, latitude, longitude) VALUES (?, ?, ?, ?, ?)',
+      [locId, id, req.user?.userId, latitude ?? 0, longitude ?? 0]);
+
+    broadcastLocationUpdate(id, latitude ?? 0, longitude ?? 0);
+
+    res.json({ success: true, data: { latitude, longitude, timestamp: new Date().toISOString() } });
+  } catch (error) {
+    console.error('Update location error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const cancelLoad = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.shipper_id !== req.user?.userId && req.user?.role !== 'admin') {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+
+    if (load.status !== 'open') {
+      res.status(400).json({ success: false, error: 'Cannot cancel load in progress' });
+      return;
+    }
+
+    await runQuery('UPDATE loads SET status = ? WHERE id = ?', ['cancelled', id]);
+
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    broadcastLoadUpdate(id, formatLoad(updatedLoad));
+
+    res.json({ success: true, data: formatLoad(updatedLoad) });
+  } catch (error) {
+    console.error('Cancel load error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const uploadProofOfDelivery = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { photos, signature, recipientName, deliveryNotes, latitude, longitude } = req.body;
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.driver_id !== req.user?.userId) {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+
+    const podId = uuidv4();
+
+    await runQuery(`
+      INSERT INTO proof_of_delivery (id, load_id, photos, signature, recipient_name, delivery_notes, latitude, longitude)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [podId, id, JSON.stringify(photos || []), signature, recipientName, deliveryNotes, latitude ?? 0, longitude ?? 0]);
+
+    // Set status to pending verification — shipper must confirm
+    await runQuery("UPDATE loads SET status = 'delivered_pending_verification', current_status = 'delivered_pending_verification' WHERE id = ?", [id]);
+    // Do NOT release payment yet — that happens after OTP verification
+
+    await runQuery(`
+      INSERT INTO notifications (id, user_id, title, message, type, reference_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [uuidv4(), load.shipper_id, 'Proof of Delivery', 'Driver has uploaded proof of delivery. Please confirm.', 'pod_uploaded', id]);
+
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    res.json({ success: true, data: formatLoad(updatedLoad) });
+  } catch (error) {
+    console.error('Upload POD error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const updateLoad = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { pickupAddress, pickupLat, pickupLng, deliveryAddress, deliveryLat, deliveryLng, cargoType, cargoWeight, truckType, specialRequirements, pickupDate, deliveryDate, price } = req.body;
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.shipper_id !== req.user?.userId && req.user?.role !== 'admin') {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+
+    if (load.status !== 'open') {
+      res.status(400).json({ success: false, error: 'Cannot edit a load that is no longer open' });
+      return;
+    }
+
+    await runQuery(`
+      UPDATE loads SET 
+        pickup_address = ?, pickup_lat = ?, pickup_lng = ?, 
+        delivery_address = ?, delivery_lat = ?, delivery_lng = ?, 
+        cargo_type = ?, cargo_weight = ?, truck_type = ?, 
+        special_requirements = ?, pickup_date = ?, delivery_date = ?, price = ?
+      WHERE id = ?
+    `, [
+      pickupAddress || load.pickup_address, pickupLat ?? load.pickup_lat, pickupLng ?? load.pickup_lng,
+      deliveryAddress || load.delivery_address, deliveryLat ?? load.delivery_lat, deliveryLng ?? load.delivery_lng,
+      cargoType || load.cargo_type, cargoWeight ?? load.cargo_weight, truckType || load.truck_type,
+      specialRequirements ?? load.special_requirements, pickupDate || load.pickup_date, deliveryDate || load.delivery_date, price ?? load.price,
+      id
+    ]);
+
+    await saveDatabase();
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    broadcastLoadUpdate(id, formatLoad(updatedLoad));
+
+    res.json({ success: true, data: formatLoad(updatedLoad) });
+  } catch (error) {
+    console.error('Update load error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+function formatLoad(load: any) {
+  return {
+    id: load.id,
+    shipperId: load.shipper_id,
+    driverId: load.driver_id,
+    pickupAddress: load.pickup_address,
+    pickupLat: load.pickup_lat,
+    pickupLng: load.pickup_lng,
+    deliveryAddress: load.delivery_address,
+    deliveryLat: load.delivery_lat,
+    deliveryLng: load.delivery_lng,
+    cargoType: load.cargo_type,
+    cargoWeight: load.cargo_weight,
+    cargoDimensions: load.cargo_dimensions,
+    truckType: load.truck_type,
+    specialRequirements: load.special_requirements,
+    pickupDate: load.pickup_date,
+    deliveryDate: load.delivery_date,
+    price: load.price,
+    status: load.status,
+    currentStatus: load.current_status,
+    bidCount: load.bid_count,
+    createdAt: load.created_at,
+    shipperName: load.shipper_name,
+    shipperPhone: load.shipper_phone,
+    shipperCompany: load.shipper_company,
+    shipperSignature: load.shipper_signature,
+    driverName: load.driver_name,
+    driverPhone: load.driver_phone,
+    driverVehicle: load.driver_vehicle,
+    driverVehicleNumber: load.driver_vehicle_number,
+    driverSignature: load.driver_signature,
+    podRejectionComment: load.pod_rejection_comment
+  };
+}
+
+function broadcastLoadUpdate(loadId: string, data: any) {
+  broadcastToLoad(loadId, { type: 'load_update', loadId, data });
+}
+
+function broadcastLocationUpdate(loadId: string, lat: number, lng: number) {
+  broadcastToLoad(loadId, { type: 'location_update', loadId, lat, lng, timestamp: new Date().toISOString() });
+}
+
+export const requestPaymentReleaseOTP = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.shipper_id !== req.user?.userId) {
+      res.status(403).json({ success: false, error: 'Only the shipper can release the payment' });
+      return;
+    }
+
+    if (load.status !== 'delivered_pending_verification') {
+      res.status(400).json({ success: false, error: 'Load must be pending verification' });
+      return;
+    }
+
+    const user = await getOne('SELECT email FROM users WHERE id = ?', [req.user?.userId]);
+
+    // Generate 6 digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiry = new Date(Date.now() + 10 * 60000).toISOString(); // 10 minutes
+
+    await runQuery('UPDATE loads SET release_otp = ?, release_otp_expiry = ? WHERE id = ?', [otp, expiry, id]);
+
+    await emailService.sendOTP(user.email, otp);
+
+    res.json({ success: true, message: 'OTP sent to registered email' });
+  } catch (error) {
+    console.error('OTP request error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const verifyPODAndReleasePayment = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.shipper_id !== req.user?.userId) {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+
+    if (load.status !== 'delivered_pending_verification' && load.current_status !== 'delivered_pending_verification') {
+      res.status(400).json({ success: false, error: 'Load is not pending verification' });
+      return;
+    }
+
+    // Try to process payout — non-fatal if mock/bank details missing
+    try {
+      const payment = await getOne('SELECT * FROM payments WHERE load_id = ?', [id]);
+      const driver = await getOne('SELECT * FROM users WHERE id = ?', [load.driver_id]);
+
+      if (payment && payment.status === 'held') {
+        // Only call mock payout if bank details exist
+        if (driver?.bank_account_number && driver?.bank_ifsc_code) {
+          await paymentGateway.initiatePayout(payment.net_amount, {
+            account: driver.bank_account_number,
+            ifsc: driver.bank_ifsc_code
+          });
+        }
+        await runQuery("UPDATE payments SET status = 'released', released_at = CURRENT_TIMESTAMP WHERE load_id = ?", [id]);
+      }
+    } catch (payoutError) {
+      // Log but don't block delivery confirmation
+      console.warn('Payout simulation failed (non-fatal):', payoutError);
+    }
+
+    // Always mark load as delivered (and increment driver jobs if not already delivered)
+    if (load.current_status !== 'delivered') {
+      await runQuery("UPDATE loads SET status = 'delivered', current_status = 'delivered' WHERE id = ?", [id]);
+      await runQuery('UPDATE users SET total_jobs = total_jobs + 1 WHERE id = ?', [load.driver_id]);
+    }
+
+    // Notify Driver
+    await runQuery(`
+      INSERT INTO notifications (id, user_id, title, message, type, reference_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [uuidv4(), load.driver_id, 'Payment Released', 'The shipper has verified the delivery. Your payment has been released.', 'payment_released', id]);
+
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    broadcastLoadUpdate(id, formatLoad(updatedLoad));
+
+    res.json({ success: true, data: formatLoad(updatedLoad) });
+  } catch (error) {
+    console.error('Verify POD error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+
+export const rejectPod = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { comment } = req.body;
+
+    if (!comment) {
+      res.status(400).json({ success: false, error: 'Reason for rejection is required' });
+      return;
+    }
+
+    const load = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+
+    if (!load) {
+      res.status(404).json({ success: false, error: 'Load not found' });
+      return;
+    }
+
+    if (load.shipper_id !== req.user?.userId && req.user?.role !== 'admin') {
+      res.status(403).json({ success: false, error: 'Not authorized' });
+      return;
+    }
+
+    if (load.status !== 'delivered_pending_verification' && load.current_status !== 'delivered_pending_verification') {
+      res.status(400).json({ success: false, error: 'Load is not pending verification' });
+      return;
+    }
+
+    // Reject POD and revert status
+    await runQuery(`
+      UPDATE loads SET 
+        status = 'assigned', 
+        current_status = 'arrived_delivery',
+        pod_rejection_comment = ?
+      WHERE id = ?
+    `, [comment, id]);
+
+    // Clear the POD records since it was rejected
+    await runQuery('DELETE FROM proof_of_delivery WHERE load_id = ?', [id]);
+
+    // Notify Driver
+    await runQuery(`
+      INSERT INTO notifications (id, user_id, title, message, type, reference_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [uuidv4(), load.driver_id, 'POD Rejected', `Shipper rejected proof of delivery: ${comment}`, 'pod_rejected', id]);
+
+    const updatedLoad = await getOne('SELECT * FROM loads WHERE id = ?', [id]);
+    broadcastLoadUpdate(id, formatLoad(updatedLoad));
+
+    res.json({ success: true, data: formatLoad(updatedLoad) });
+  } catch (error) {
+    console.error('Reject POD error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export const getAiPricingRecommendation = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { distance, weight, truckType, cargoType, pickupAddress, deliveryAddress } = req.body;
+    
+    if (distance === undefined || !weight || !truckType || !cargoType) {
+      res.status(400).json({ success: false, error: 'Required fields: distance, weight, truckType, cargoType' });
+      return;
+    }
+    
+    const pricingData = await getAiPricing({
+      distance: parseFloat(distance),
+      weight: parseFloat(weight),
+      truckType,
+      cargoType,
+      pickupAddress: pickupAddress || '',
+      deliveryAddress: deliveryAddress || ''
+    });
+    
+    res.json(pricingData);
+  } catch (error) {
+    console.error('AI pricing controller error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+};
+
+export default { createLoad, getLoads, getLoad, updateLoad, acceptLoad, updateLoadStatus, updateLocation, cancelLoad, uploadProofOfDelivery, requestPaymentReleaseOTP, verifyPODAndReleasePayment, rejectPod, getAiPricingRecommendation };

@@ -1,0 +1,23 @@
+.page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+.page-header h1 { font-size: 1.75rem; margin-bottom: 8px; }
+.page-subtitle { color: var(--text-secondary); }
+.filters { display: flex; gap: 8px; margin-bottom: 24px; background: var(--card-bg); padding: 8px; border-radius: var(--radius); width: fit-content; }
+.filter-btn { padding: 10px 20px; background: transparent; border: none; border-radius: var(--radius-sm); color: var(--text-secondary); font-weight: 500; transition: var(--transition); }
+.filter-btn:hover { color: var(--text-primary); }
+.filter-btn.active { background: var(--primary); color: white; }
+.loads-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.load-card { cursor: pointer; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.load-id { font-family: monospace; color: var(--text-secondary); font-size: 0.9rem; }
+.route-display { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.route-item { display: flex; align-items: center; gap: 8px; }
+.route-text { font-weight: 500; font-size: 0.95rem; }
+.route-arrow { color: var(--primary); font-size: 1.25rem; margin-left: 10px; }
+.card-details { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.detail { display: flex; flex-direction: column; gap: 4px; }
+.detail-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; }
+.detail-value { font-weight: 600; font-size: 0.9rem; }
+.detail-value.price { color: var(--success); }
+.card-footer { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; color: var(--text-secondary); }
+@media (max-width: 1024px) { .loads-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 768px) { .page-header { flex-direction: column; gap: 16px; } .loads-grid { grid-template-columns: 1fr; } .filters { width: 100%; overflow-x: auto; } }
